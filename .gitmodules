@@ -1,0 +1,9 @@
+[submodule "ImageCodecOpenCL"]
+	path = ImageCodecOpenCL
+	url = https://github.com/a645162/ImageCodecOpenCL.git
+[submodule "ImageCodecPlatform"]
+	path = ImageCodecPlatform
+	url = https://github.com/a645162/ImageCodecPlatform.git
+[submodule "ImageCodecVulkan"]
+	path = ImageCodecVulkan
+	url = https://github.com/a645162/ImageCodecVulkan.git
