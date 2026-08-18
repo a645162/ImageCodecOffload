@@ -8,12 +8,14 @@
 |--------|------|-----------|------|
 | `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU） | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
 | `ImageCodecPlatform` | 平台抽象（exe_dir/单调时钟/休眠）与 Intel oneVPL（`libvpl.dll` 动态加载）JPEG 硬件后端；未来承载 nvJPEG/nvTIFF 等厂商专用后端 | `image_codec_*` | `libvpl.dll` + D3D11（Windows） |
-| `ImageCodecVulkan` | Vulkan 后端（预留） | - | Vulkan SDK |
+| `ImageCodecVulkan` | Vulkan compute 与 Win32 external-memory → OpenGL 互操作 | - | Vulkan SDK / vcpkg `vulkan` |
 
 ## 约束
 
 - `ImageCodecOpenCL` **不引用** `ImageCodecPlatform`（纯 OpenCL，自包含）。
 - `ImageCodecPlatform` 仅承载平台抽象与厂商/Intel 专用后端，供上层按需接入。
+- `ImageCodecVulkan` 可通过 `add_subdirectory(... EXCLUDE_FROM_ALL)` 被上层复用；
+  使用 `VulkanImageCodec::Api`，不要复制其 Win32 handle/GL 导入实现。
 
 ## 目录结构
 
