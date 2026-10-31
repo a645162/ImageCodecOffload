@@ -104,6 +104,17 @@ enum class BackendKind {
 
 const char *backendName(BackendKind kind);
 
+// 编解码执行模式。能力页和任务报告必须区分 GPU 实际参与的阶段，不能把
+// 通过 GPU 后端入口的 CPU 回退误报成 Native GPU。
+enum class ExecutionMode {
+  Unavailable = 0,
+  Cpu = 1,
+  HybridCpuGpu = 2,
+  NativeGpu = 3,
+};
+
+const char *executionModeName(ExecutionMode mode);
+
 // ---- 图像 ----
 // 统一用「紧凑、样本原样保留」表示：pixels 大小恒为 width*height*channels。
 // channels 的取值与 PNG 颜色类型一致：1 = 灰度、2 = 灰度+Alpha、3 = RGB、

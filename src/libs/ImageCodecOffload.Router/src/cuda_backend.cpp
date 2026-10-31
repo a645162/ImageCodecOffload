@@ -101,6 +101,11 @@ class CudaBackend final : public ICodecBackend {
            format == Format::Png;
   }
 
+  ExecutionMode executionMode(Format format) const override {
+    return supports(format) ? ExecutionMode::HybridCpuGpu
+                             : ExecutionMode::Unavailable;
+  }
+
   Result<void> available() const override {
     if (available_checked_) return available_result_;
 

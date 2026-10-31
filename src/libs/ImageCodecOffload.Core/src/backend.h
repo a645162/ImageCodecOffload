@@ -42,6 +42,11 @@ public:
   // 「选了一个根本不会这格式的后端再失败」。
   virtual bool supports(Format format) const = 0;
 
+  // 支持某格式时返回实际执行模式；未声明支持的格式必须返回 Unavailable。
+  virtual ExecutionMode executionMode(Format format) const {
+    return supports(format) ? ExecutionMode::Cpu : ExecutionMode::Unavailable;
+  }
+
   virtual Result<std::vector<uint8_t>> encode(Format format, const Image &image,
                                               const EncodeParams &params) = 0;
 

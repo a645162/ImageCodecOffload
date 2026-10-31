@@ -117,6 +117,20 @@ const char* backendName(BackendKind kind) {
   return "unknown";
 }
 
+const char* executionModeName(ExecutionMode mode) {
+  switch (mode) {
+    case ExecutionMode::Unavailable:
+      return "unavailable";
+    case ExecutionMode::Cpu:
+      return "cpu";
+    case ExecutionMode::HybridCpuGpu:
+      return "hybrid-cpu-gpu";
+    case ExecutionMode::NativeGpu:
+      return "native-gpu";
+  }
+  return "unavailable";
+}
+
 Format probeFormat(const uint8_t* data, size_t size) {
   if (data == nullptr) return Format::Unknown;
 

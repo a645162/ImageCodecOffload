@@ -66,6 +66,10 @@ class Router {
   // 查询某个已构建后端是否声明支持指定格式；不触发设备探测。
   bool supports(BackendKind kind, Format format) const;
 
+  // 返回后端对格式的实际执行模式，不触发设备探测；设备原因由
+  // probeBackends() 提供。
+  ExecutionMode executionMode(BackendKind kind, Format format) const;
+
   // 每个后端的可用性（含具体原因），供 CLI / 设置页展示。
   // 不做缓存：用户可能在两次调用之间装了驱动、退出了占显存的程序。
   std::vector<std::pair<BackendKind, std::string>> probeBackends() const;

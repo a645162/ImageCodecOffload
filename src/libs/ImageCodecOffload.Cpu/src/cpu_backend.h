@@ -30,6 +30,10 @@ class CpuBackend final : public ICodecBackend {
            format == Format::JpegXl;
   }
 
+  ExecutionMode executionMode(Format format) const override {
+    return supports(format) ? ExecutionMode::Cpu : ExecutionMode::Unavailable;
+  }
+
   Result<std::vector<uint8_t>> encode(Format format, const Image& image,
                                       const EncodeParams& params) override;
 

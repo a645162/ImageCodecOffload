@@ -31,6 +31,7 @@
 using image_codec::offload::BackendKind;
 using image_codec::offload::EncodeCapabilities;
 using image_codec::offload::EncodeParams;
+using image_codec::offload::ExecutionMode;
 using image_codec::offload::Format;
 using image_codec::offload::Image;
 using image_codec::offload::Router;
@@ -69,6 +70,31 @@ void testFormatCatalogAndProbe() {
                          0x0A, 0x87, 0x0A};
   check(image_codec::offload::probeFormat(jxl, sizeof(jxl)) == Format::JpegXl,
         "jxl signature");
+}
+
+void testExecutionModeContract() {
+  Router router;
+  check(router.executionMode(BackendKind::Cpu, Format::Jpeg) ==
+            ExecutionMode::Cpu,
+        "cpu jpeg reports cpu execution mode");
+  check(router.executionMode(BackendKind::Cpu, Format::JpegXl) ==
+            ExecutionMode::Cpu,
+        "cpu jpeg-xl reports cpu execution mode");
+  check(std::string(image_codec::offload::executionModeName(
+            ExecutionMode::HybridCpuGpu)) == "hybrid-cpu-gpu",
+        "execution mode has stable display name");
+  for (const BackendKind kind : {BackendKind::OpenCl, BackendKind::Cuda,
+                                 BackendKind::Vulkan}) {
+    if (!router.supports(kind, Format::Jpeg)) {
+      check(router.executionMode(kind, Format::Jpeg) ==
+                ExecutionMode::Unavailable,
+            "unsupported gpu format reports unavailable mode");
+    } else {
+      check(router.executionMode(kind, Format::Jpeg) ==
+                ExecutionMode::HybridCpuGpu,
+            "gpu jpeg reports hybrid execution mode");
+    }
+  }
 }
 
 void testJpeg2000CpuRoundtrip() {
@@ -1748,6 +1774,7 @@ void testTiffStripSharding() {
 
 int main() {
   testFormatCatalogAndProbe();
+  testExecutionModeContract();
   testJpeg2000CpuRoundtrip();
   testJpegXlCpuRoundtrip();
   testBmpRoundtrip();
