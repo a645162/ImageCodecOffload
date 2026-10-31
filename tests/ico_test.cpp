@@ -70,6 +70,14 @@ void testFormatCatalogAndProbe() {
                          0x0A, 0x87, 0x0A};
   check(image_codec::offload::probeFormat(jxl, sizeof(jxl)) == Format::JpegXl,
         "jxl signature");
+
+  int c_format = ICO_FORMAT_UNKNOWN;
+  check(image_codec_offload_probe(jp2, sizeof(jp2), &c_format) == ICO_OK &&
+            c_format == ICO_FORMAT_JPEG2000,
+        "c api jp2 signature");
+  check(image_codec_offload_probe(jxl, sizeof(jxl), &c_format) == ICO_OK &&
+            c_format == ICO_FORMAT_JPEG_XL,
+        "c api jxl signature");
 }
 
 void testExecutionModeContract() {

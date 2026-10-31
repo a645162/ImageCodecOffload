@@ -397,6 +397,12 @@ ico_status image_codec_offload_probe(const void* data, size_t size,
     case Format::Png:
       *out_format = ICO_FORMAT_PNG;
       break;
+    case Format::Jpeg2000:
+      *out_format = ICO_FORMAT_JPEG2000;
+      break;
+    case Format::JpegXl:
+      *out_format = ICO_FORMAT_JPEG_XL;
+      break;
     default:
       *out_format = ICO_FORMAT_UNKNOWN;
       break;
