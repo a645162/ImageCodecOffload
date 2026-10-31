@@ -73,13 +73,10 @@ if(IMAGECODEC_OFFLOAD_WITH_PLATFORM)
   add_subdirectory(libs/ImageCodecPlatform)
 endif()
 
+# Vulkan 后端：TIFF / PNG 与画质指标已实现；JPEG 尚未实现，由能力表
+# （capabilities.jpeg_* = 0）在选后端时挡掉，交给 OpenCL / CUDA / CPU。
 if(IMAGECODEC_OFFLOAD_WITH_VULKAN)
-  # 现状：ImageCodecVulkan 只有 Vulkan compute 与 Win32 external-memory -> GL
-  # 互操作，没有任何 TIFF/PNG/JPEG 编解码与指标实现。打开它只会得到一个
-  # 「注册了但什么都做不了」的后端，因此这里明确拒绝，而不是静默跳过。
-  message(FATAL_ERROR
-    "IMAGECODEC_OFFLOAD_WITH_VULKAN 暂不可用：libs/ImageCodecVulkan 目前还没有"
-    " TIFF/PNG/JPEG 编解码与画质指标实现。请先用 OpenCL 或 CUDA 后端。")
+  add_subdirectory(libs/ImageCodecVulkan)
 endif()
 
 # ---- 本项目的路由层 / API / CLI ----

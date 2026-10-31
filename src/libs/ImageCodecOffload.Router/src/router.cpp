@@ -6,6 +6,7 @@
 #include "cpu_backend.h"
 #include "cuda_backend.h"
 #include "opencl_backend.h"
+#include "vulkan_backend.h"
 
 namespace image_codec {
 namespace offload {
@@ -118,6 +119,9 @@ Router::Router() {
   if (auto cuda = makeCudaBackend(); cuda != nullptr) {
     backends_.push_back(std::move(cuda));
   }
+  if (auto vulkan = makeVulkanBackend(); vulkan != nullptr) {
+    backends_.push_back(std::move(vulkan));
+  }
   backends_.push_back(std::make_unique<cpu::CpuBackend>());
 
   order_ = defaultOrder();
@@ -127,8 +131,10 @@ Router::~Router() = default;
 
 std::vector<BackendKind> Router::defaultOrder() {
   // CUDA 排第一：同一张图上 nvJPEG / GPU LZW / GPU 行滤波通常比手写 OpenCL
-  // 实现快；OpenCL 第二（覆盖面最广，Intel/NVIDIA/AMD 都有）；CPU 永远最后。
-  return {BackendKind::Cuda, BackendKind::OpenCl, BackendKind::Cpu};
+  // 实现快；OpenCL 第二（覆盖面最广，Intel/NVIDIA/AMD 都有）；Vulkan 第三
+  // （目前只有 TIFF/PNG 与指标，JPEG 由能力表挡掉）；CPU 永远最后。
+  return {BackendKind::Cuda, BackendKind::OpenCl, BackendKind::Vulkan,
+          BackendKind::Cpu};
 }
 
 void Router::setOrder(std::vector<BackendKind> order) {

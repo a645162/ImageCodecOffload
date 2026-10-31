@@ -42,16 +42,16 @@ void printUsage() {
       "  ico info <file>\n"
       "  ico encode <in> <out> [--quality N] [--compression N] [--tile N]\n"
       "                        [--rows N] [--png-level N] [--png-filter N]\n"
-      "                        [--backend cpu|opencl|cuda]\n"
-      "  ico decode <in> <out.bmp> [--backend cpu|opencl|cuda]\n"
-      "  ico compare <a> <b> [--backend cpu|opencl|cuda]\n"
+      "                        [--backend cpu|opencl|cuda|vulkan]\n"
+      "  ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]\n"
+      "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]\n"
       "\n"
       "in/out 的格式由文件内容（魔数）与扩展名共同决定；BMP 只用于中转。\n");
 }
 
-bool readFile(const std::string& path, std::vector<uint8_t>* out,
-              std::string* err) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+bool readFile(const std::string &path, std::vector<uint8_t> *out,
+              std::string *err) {
+  std::FILE *f = std::fopen(path.c_str(), "rb");
   if (f == nullptr) {
     if (err != nullptr) *err = "cannot open " + path;
     return false;
@@ -65,7 +65,8 @@ bool readFile(const std::string& path, std::vector<uint8_t>* out,
     return false;
   }
   out->resize(static_cast<size_t>(size));
-  const size_t read = out->empty() ? 0 : std::fread(out->data(), 1, out->size(), f);
+  const size_t read =
+      out->empty() ? 0 : std::fread(out->data(), 1, out->size(), f);
   std::fclose(f);
   if (read != out->size()) {
     if (err != nullptr) *err = "short read on " + path;
@@ -76,9 +77,9 @@ bool readFile(const std::string& path, std::vector<uint8_t>* out,
 
 // 只读文件开头若干字节：用于「先看魔数/BMP 头再决定要不要整套读进来」。
 // Merge.bmp 是 1.9 GB，`ico info` 不该为了打印两行尺寸把它全读进内存。
-bool readPrefix(const std::string& path, size_t max_bytes,
-                std::vector<uint8_t>* out, std::string* err) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+bool readPrefix(const std::string &path, size_t max_bytes,
+                std::vector<uint8_t> *out, std::string *err) {
+  std::FILE *f = std::fopen(path.c_str(), "rb");
   if (f == nullptr) {
     if (err != nullptr) *err = "cannot open " + path;
     return false;
@@ -90,9 +91,9 @@ bool readPrefix(const std::string& path, size_t max_bytes,
   return true;
 }
 
-bool writeFile(const std::string& path, const std::vector<uint8_t>& data,
-               std::string* err) {
-  std::FILE* f = std::fopen(path.c_str(), "wb");
+bool writeFile(const std::string &path, const std::vector<uint8_t> &data,
+               std::string *err) {
+  std::FILE *f = std::fopen(path.c_str(), "wb");
   if (f == nullptr) {
     if (err != nullptr) *err = "cannot create " + path;
     return false;
@@ -107,21 +108,21 @@ bool writeFile(const std::string& path, const std::vector<uint8_t>& data,
   return true;
 }
 
-bool hasExtension(const std::string& path, const char* ext) {
+bool hasExtension(const std::string &path, const char *ext) {
   if (path.size() < std::strlen(ext)) return false;
   std::string tail = path.substr(path.size() - std::strlen(ext));
-  for (char& c : tail) c = static_cast<char>(std::tolower(c));
+  for (char &c : tail) c = static_cast<char>(std::tolower(c));
   return tail == ext;
 }
 
-bool isBmp(const std::vector<uint8_t>& data) {
+bool isBmp(const std::vector<uint8_t> &data) {
   return data.size() >= 2 && data[0] == 'B' && data[1] == 'M';
 }
 
-Format formatFromPathOrBytes(const std::string& path,
-                             const std::vector<uint8_t>& data) {
-  const Format probed = image_codec::offload::probeFormat(data.data(),
-                                                          data.size());
+Format formatFromPathOrBytes(const std::string &path,
+                             const std::vector<uint8_t> &data) {
+  const Format probed =
+      image_codec::offload::probeFormat(data.data(), data.size());
   if (probed != Format::Unknown) return probed;
 
   if (hasExtension(path, ".jpg") || hasExtension(path, ".jpeg")) {
@@ -134,7 +135,7 @@ Format formatFromPathOrBytes(const std::string& path,
   return Format::Unknown;
 }
 
-bool parseBackend(const std::string& value, BackendKind* out) {
+bool parseBackend(const std::string &value, BackendKind *out) {
   if (value == "cpu") {
     *out = BackendKind::Cpu;
     return true;
@@ -147,18 +148,22 @@ bool parseBackend(const std::string& value, BackendKind* out) {
     *out = BackendKind::Cuda;
     return true;
   }
+  if (value == "vulkan") {
+    *out = BackendKind::Vulkan;
+    return true;
+  }
   return false;
 }
 
 // 读一张图：BMP 走中转格式，其它走路由层解码。
-bool loadImage(Router& router, const std::string& path, Image* out,
-               std::string* err) {
+bool loadImage(Router &router, const std::string &path, Image *out,
+               std::string *err) {
   std::vector<uint8_t> bytes;
   if (!readFile(path, &bytes, err)) return false;
 
   if (isBmp(bytes)) {
-    auto bmp = image_codec::offload::common::readBmp(bytes.data(),
-                                                     bytes.size());
+    auto bmp =
+        image_codec::offload::common::readBmp(bytes.data(), bytes.size());
     if (!bmp) {
       if (err != nullptr) *err = "bmp: " + bmp.error().message;
       return false;
@@ -189,13 +194,13 @@ long long nowMicros() {
       .count();
 }
 
-void printOutcome(const image_codec::offload::Outcome& outcome) {
+void printOutcome(const image_codec::offload::Outcome &outcome) {
   std::printf("backend: %s", image_codec::offload::backendName(outcome.used));
   if (outcome.fellBack()) {
     std::printf("  (fell back)");
   }
   std::printf("\n");
-  for (const std::string& note : outcome.notes) {
+  for (const std::string &note : outcome.notes) {
     std::printf("  - %s\n", note.c_str());
   }
 }
@@ -207,7 +212,7 @@ int cmdBackends() {
   const auto probed = router.probeBackends();
 
   std::printf("%-8s %-8s %s\n", "backend", "state", "detail");
-  for (const auto& [kind, detail] : probed) {
+  for (const auto &[kind, detail] : probed) {
     const bool ready = detail == "ready";
     std::printf("%-8s %-8s %s\n", image_codec::offload::backendName(kind),
                 ready ? "ready" : "unusable", detail.c_str());
@@ -215,7 +220,7 @@ int cmdBackends() {
   return 0;
 }
 
-int cmdInfo(const std::string& path) {
+int cmdInfo(const std::string &path) {
   std::vector<uint8_t> head;
   std::string err;
   if (!readPrefix(path, 65536, &head, &err)) {
@@ -227,8 +232,8 @@ int cmdInfo(const std::string& path) {
 
   // BMP 是 CLI/测试的中转格式：只读头就能报尺寸，不必把 1.9 GB 读进来。
   if (isBmp(head)) {
-    const auto header = image_codec::offload::common::probeBmp(head.data(),
-                                                               head.size());
+    const auto header =
+        image_codec::offload::common::probeBmp(head.data(), head.size());
     if (!header) {
       std::fprintf(stderr, "error: %s\n", header.error().message.c_str());
       return 1;
@@ -262,8 +267,8 @@ int cmdInfo(const std::string& path) {
   return 0;
 }
 
-int cmdEncode(const std::string& in, const std::string& out,
-              const EncodeParams& params, bool force, BackendKind kind) {
+int cmdEncode(const std::string &in, const std::string &out,
+              const EncodeParams &params, bool force, BackendKind kind) {
   image_codec::offload::Router router;
   std::string err;
 
@@ -273,10 +278,10 @@ int cmdEncode(const std::string& in, const std::string& out,
     return 1;
   }
 
-  const Format format = hasExtension(out, ".jpg") || hasExtension(out, ".jpeg")
-                            ? Format::Jpeg
-                            : (hasExtension(out, ".png") ? Format::Png
-                                                         : Format::Tiff);
+  const Format format =
+      hasExtension(out, ".jpg") || hasExtension(out, ".jpeg")
+          ? Format::Jpeg
+          : (hasExtension(out, ".png") ? Format::Png : Format::Tiff);
 
   const long long t0 = nowMicros();
   image_codec::offload::Outcome outcome;
@@ -297,8 +302,8 @@ int cmdEncode(const std::string& in, const std::string& out,
   }
 
   const double ms = static_cast<double>(t1 - t0) / 1000.0;
-  const double mib = static_cast<double>(image.pixels.size()) /
-                     (1024.0 * 1024.0);
+  const double mib =
+      static_cast<double>(image.pixels.size()) / (1024.0 * 1024.0);
   std::printf("%dx%d x%d -> %s: %zu bytes in %.1f ms (%.1f MiB/s)\n",
               image.width, image.height, image.channels,
               image_codec::offload::formatName(format), encoded->size(), ms,
@@ -312,7 +317,7 @@ int cmdEncode(const std::string& in, const std::string& out,
   return 0;
 }
 
-int cmdDecode(const std::string& in, const std::string& out, bool force,
+int cmdDecode(const std::string &in, const std::string &out, bool force,
               BackendKind kind) {
   image_codec::offload::Router router;
   std::string err;
@@ -331,10 +336,9 @@ int cmdDecode(const std::string& in, const std::string& out, bool force,
 
   const long long t0 = nowMicros();
   image_codec::offload::Outcome outcome;
-  auto decoded = force ? router.decodeWith(kind, format, bytes.data(),
-                                           bytes.size())
-                       : router.decode(format, bytes.data(), bytes.size(),
-                                       &outcome);
+  auto decoded =
+      force ? router.decodeWith(kind, format, bytes.data(), bytes.size())
+            : router.decode(format, bytes.data(), bytes.size(), &outcome);
   const long long t1 = nowMicros();
 
   if (!decoded) {
@@ -367,7 +371,7 @@ int cmdDecode(const std::string& in, const std::string& out, bool force,
   return 0;
 }
 
-int cmdCompare(const std::string& a_path, const std::string& b_path, bool force,
+int cmdCompare(const std::string &a_path, const std::string &b_path, bool force,
                BackendKind kind) {
   image_codec::offload::Router router;
   std::string err;
@@ -418,9 +422,9 @@ int cmdCompare(const std::string& a_path, const std::string& b_path, bool force,
   return 0;
 }
 
-}  // namespace
+} // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (argc < 2) {
     printUsage();
     return 1;
@@ -438,7 +442,7 @@ int main(int argc, char** argv) {
   std::vector<std::string> positional;
   for (int i = 2; i < argc; ++i) {
     const std::string arg = argv[i];
-    const auto next = [&](const char* what) -> const char* {
+    const auto next = [&](const char *what) -> const char * {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "error: %s needs a value\n", what);
         std::exit(1);

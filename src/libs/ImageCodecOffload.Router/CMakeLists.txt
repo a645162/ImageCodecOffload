@@ -4,7 +4,9 @@ add_library(ImageCodecOffload.Router STATIC
   src/opencl_backend.h
   src/opencl_backend.cpp
   src/cuda_backend.h
-  src/cuda_backend.cpp)
+  src/cuda_backend.cpp
+  src/vulkan_backend.h
+  src/vulkan_backend.cpp)
 
 target_include_directories(ImageCodecOffload.Router PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -27,6 +29,13 @@ if(IMAGECODEC_OFFLOAD_WITH_CUDA)
     IMAGECODEC_OFFLOAD_WITH_CUDA=1)
   target_link_libraries(ImageCodecOffload.Router PRIVATE
     Cuda.Image.Codec.Api)
+endif()
+
+if(IMAGECODEC_OFFLOAD_WITH_VULKAN)
+  target_compile_definitions(ImageCodecOffload.Router PRIVATE
+    IMAGECODEC_OFFLOAD_WITH_VULKAN=1)
+  target_link_libraries(ImageCodecOffload.Router PRIVATE
+    VulkanImageCodec::CodecApi)
 endif()
 
 add_library(ImageCodecOffload::Router ALIAS ImageCodecOffload.Router)

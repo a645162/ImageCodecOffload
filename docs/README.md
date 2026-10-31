@@ -11,7 +11,8 @@
 src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
    ├─ ImageCodecOffload.Cpu         ← libtiff / libpng / libjpeg-turbo（永远可用，也是像素级参照）
    ├─ ImageCodecOffload.Router ──►  libs/ImageCodecCUDA   （nvJPEG / GPU LZW / GPU 行滤波）
-   └─ ImageCodecOffload.Router ──►  libs/ImageCodecOpenCL （混合 JPEG / GPU LZW）
+   ├─ ImageCodecOffload.Router ──►  libs/ImageCodecOpenCL （混合 JPEG / GPU LZW）
+   └─ ImageCodecOffload.Router ──►  libs/ImageCodecVulkan （TIFF 预测器 / PNG 行滤波 / 指标）
         ▲
         └─ ImageCodecOffload.Core / .Common / .Api（类型、指标 CPU 参考、BMP 中转、C API）
 ```
@@ -23,20 +24,21 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 | `ImageCodecCUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库 | `image_codec_cuda_*`（`<ImageCodecCUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
 | `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU） | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
 | `ImageCodecPlatform` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | 构建期仅 oneVPL 头（`3rdparty/libvpl`）；运行期 `libvpl2` + `libmfx-gen1.2`（vpl-gpu-rt）+ `intel-media-va-driver`（Windows：Intel 显卡驱动自带 `libvpl.dll`/`libmfx-gen.dll`）。Linux / Windows 双平台，帧只走系统内存 |
-| `ImageCodecVulkan` | Vulkan compute 与 Win32 external-memory → OpenGL 互操作 | - | Vulkan SDK / vcpkg `vulkan` |
+| `ImageCodecVulkan` | Vulkan compute 编解码：TIFF（容器 + LZW(CPU) + Predictor=2(GPU)）、PNG（行滤波 GPU + DEFLATE(CPU)）、画质指标（fp64）；另含 Win32 external-memory → OpenGL 互操作（仅 Windows） | `image_codec_vulkan_*`（`<VulkanImageCodec/image_codec_vulkan.h>`） | Vulkan SDK / vcpkg `vulkan`；GLSL 编译器（`glslc` 或 `glslangValidator`，只在构建期用） |
 
 ## 能力矩阵（现状）
 
-| 格式 | CUDA | OpenCL | CPU |
-| --- | --- | --- | --- |
-| JPEG | 编码/解码（nvJPEG，1 或 3 通道；2/4 明确拒绝） | 编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | 编码/解码（1 或 3 通道；2/4 明确拒绝） |
-| TIFF | 编码/解码（LZW/none，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
-| PNG | 编码/解码（1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
-| MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（参考实现） |
+| 格式 | CUDA | OpenCL | Vulkan | CPU |
+| --- | --- | --- | --- | --- |
+| JPEG | 编码/解码（nvJPEG，1 或 3 通道；2/4 明确拒绝） | 编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | **未实现**（能力表 `jpeg_*` = 0，选后端时即排除） | 编码/解码（1 或 3 通道；2/4 明确拒绝） |
+| TIFF | 编码/解码（LZW/none，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道；Predictor=2 在 GPU，LZW 在 CPU） | 编码/解码（1/2/3/4 通道） |
+| PNG | 编码/解码（1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
+| MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（要求 `shaderFloat64`，申请不到即明确失败） | 有（参考实现） |
 
-Vulkan 目前**没有任何 TIFF/PNG/JPEG 编解码与指标实现**，因此
-`IMAGECODEC_OFFLOAD_WITH_VULKAN=ON` 在 configure 阶段直接 `FATAL_ERROR`，
-而不是注册一个「存在但什么都做不了」的后端。
+Vulkan 后端的**分工刻意与 GPU 并行度对齐**：PNG 行滤波与 TIFF Predictor=2 是逐行/逐字节
+独立的工作，放在 GPU；LZW 字典构建与 zlib deflate/inflate 是严格串行的，留在 CPU。
+`capabilities.tiff_lzw_gpu` 因此如实报 0，而不是给一个「看着有 GPU 参与、其实更慢」的路径。
+JPEG 尚未实现，`capabilities.jpeg_encode/decode` 报 0，路由层在**选后端之前**就会排除它。
 
 ## 回退语义
 
@@ -102,7 +104,7 @@ cmake --build build -j
 | `IMAGECODEC_OFFLOAD_WITH_OPENCL` | `ON` | 构建 OpenCL 后端 |
 | `IMAGECODEC_OFFLOAD_WITH_CUDA` | `OFF` | 构建 CUDA 后端（顶层会在 `project()` 前探测 `nvcc`） |
 | `IMAGECODEC_OFFLOAD_WITH_PLATFORM` | `OFF` | 构建 `ImageCodecPlatform`（平台抽象 + Intel oneVPL 硬件 JPEG / TIFF JPEG strips）。**只加库，不动路由后端表与 `ico`** |
-| `IMAGECODEC_OFFLOAD_WITH_VULKAN` | `OFF` | 打开即 `FATAL_ERROR`（见上） |
+| `IMAGECODEC_OFFLOAD_WITH_VULKAN` | `OFF` | 构建 Vulkan 后端（TIFF/PNG + 指标；JPEG 未实现，由能力表挡掉）。需要 GLSL 编译器（`glslc` 或 `glslangValidator`） |
 | `IMAGECODEC_OFFLOAD_BUILD_CLI` | `ON` | 构建 `ico` |
 | `IMAGECODEC_OFFLOAD_BUILD_TESTS` | `OFF` | 构建并注册 ctest（`ico_test` + 各子项目测试） |
 
@@ -152,8 +154,11 @@ BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入）�
 - Intel 硬件 JPEG **不是**「TIFF 也有硬件单元」：TIFF 侧只有容器，压缩走
   「硬件 JPEG strips（Compression=7）」。TIFF 容器由本仓库自写（IFD / JPEGTables），
   libtiff 只用于测试端解码校验——它写 JPEG 会重新编码 strip，没有入口接收已编好的码流。
-- `ImageCodecVulkan` 可通过 `add_subdirectory(... EXCLUDE_FROM_ALL)` 被上层复用；
-  使用 `VulkanImageCodec::Api`，不要复制其 Win32 handle/GL 导入实现。
+- `ImageCodecVulkan` 可通过 `add_subdirectory` 被上层复用；编解码走
+  `VulkanImageCodec::CodecApi`（平台无关），GL 互操作走 `VulkanImageCodec::Api`
+  （仅 Windows），不要复制其 Win32 handle/GL 导入实现。
+- Vulkan 着色器在 configure 阶段编译成 SPIR-V 再嵌入头文件（`cmake/spv_to_header.cmake`），
+  `.spv` 是构建产物、不提交进仓库；**新增着色器必须重新 configure**。
 - 三个后端的画质指标必须逐项给出**同一个数字**（golden 常量锁在
   `tests/ico_test.cpp`）。换后端不换数字，改公式就是改契约。
 - 子项目的 CMake 用 `PROJECT_SOURCE_DIR` 定位自己的 `include/`：
