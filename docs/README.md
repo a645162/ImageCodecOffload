@@ -22,7 +22,7 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 |--------|------|-----------|------|
 | `ImageCodecCUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库 | `image_codec_cuda_*`（`<ImageCodecCUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
 | `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU） | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
-| `ImageCodecPlatform` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | oneVPL 头（`3rdparty/libvpl`）+ 运行期 `libvpl` + Intel 驱动（`libmfx-gen` / `vpl-gpu-rt`）；Linux / Windows 双平台，帧只走系统内存 |
+| `ImageCodecPlatform` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | 构建期仅 oneVPL 头（`3rdparty/libvpl`）；运行期 `libvpl2` + `libmfx-gen1.2`（vpl-gpu-rt）+ `intel-media-va-driver`（Windows：Intel 显卡驱动自带 `libvpl.dll`/`libmfx-gen.dll`）。Linux / Windows 双平台，帧只走系统内存 |
 | `ImageCodecVulkan` | Vulkan compute 与 Win32 external-memory → OpenGL 互操作 | - | Vulkan SDK / vcpkg `vulkan` |
 
 ## 能力矩阵（现状）
@@ -95,6 +95,28 @@ cmake --build build -j
 | `IMAGECODEC_OFFLOAD_WITH_VULKAN` | `OFF` | 打开即 `FATAL_ERROR`（见上） |
 | `IMAGECODEC_OFFLOAD_BUILD_CLI` | `ON` | 构建 `ico` |
 | `IMAGECODEC_OFFLOAD_BUILD_TESTS` | `OFF` | 构建并注册 ctest（`ico_test` + 各子项目测试） |
+
+### `ImageCodecPlatform` 的依赖（`_WITH_PLATFORM=ON` 时才相关）
+
+构建期只需要 **oneVPL 头**（submodule，不链接、不需要 SDK 安装包）：
+
+```bash
+git submodule update --init --recursive   # 3rdparty/libvpl（头）、3rdparty/vpl-gpu-rt（参考，不编译）
+```
+
+运行期才需要硬件栈（编译机可以完全不装）：
+
+| 平台 | 需要 | 说明 |
+| --- | --- | --- |
+| Linux | `libvpl2` + `libmfx-gen1.2`（vpl-gpu-rt，提供 `libmfx-gen.so.1.2`）+ `intel-media-va-driver` | `sudo apt install libvpl2 libmfx-gen1.2 intel-media-va-driver`；`libva2`/`libva-drm2` 由 apt 带上；权限只要 `/dev/dri/renderD*` 可读写（logind 自动 ACL），不需要 root、不需要 `render` 组 |
+| Windows | Intel 显卡驱动（自带 `libvpl.dll` + `libmfx-gen.dll`） | 不需要 oneVPL SDK；驱动装好即可 |
+
+子项目自测 CLI（`OIC_BUILD_CLI`，父项目内默认关闭）另需**可选**的 `libjpeg` / `libtiff`：
+`libjpeg` 提供软件参考编码器（没有 Intel 硬件也能验证 TIFF 容器），`libtiff` **只用于解码校验**。
+两者缺失时对应自测项 SKIP，不影响库构建。
+
+明确不需要：D3D11/DXGI、OpenCL/CUDA 运行库、X server（纯计算，可无显示器）、root 权限。
+依赖细节与实测环境见 `libs/ImageCodecPlatform/README.md` 的「依赖清单」。
 
 ## CLI `ico`
 
