@@ -1,0 +1,172 @@
+// png_io.cpp - libpng 的编解码基线。
+//
+// libpng 的错误模型是 setjmp/longjmp：任何一次读写在内部失败都会跳到我们
+// 设置的 jmpbuf。因此每个入口都必须先 setjmp 再做任何调用，并且保证跳回来
+// 之后把 png_struct/png_info 销毁干净——否则一次坏输入就会漏一块结构。
+#include "png_io.h"
+
+#include <png.h>
+
+#include <csetjmp>
+#include <cstring>
+#include <memory>
+#include <string>
+
+namespace image_codec {
+namespace offload {
+namespace cpu {
+
+namespace {
+
+// ---- 写内存 ----
+struct PngSink {
+  std::vector<uint8_t>* out = nullptr;
+};
+
+void pngWriteMemory(png_structp png, png_bytep data, png_size_t length) {
+  auto* sink = static_cast<PngSink*>(png_get_io_ptr(png));
+  if (sink == nullptr || sink->out == nullptr) return;
+  sink->out->insert(sink->out->end(), data, data + length);
+}
+
+void pngFlushMemory(png_structp) {}
+
+int filterMask(int filter) {
+  switch (filter) {
+    case 0:
+      return PNG_FILTER_NONE;
+    case 1:
+      return PNG_FILTER_SUB;
+    case 2:
+      return PNG_FILTER_UP;
+    case 3:
+      return PNG_FILTER_AVG;
+    case 4:
+      return PNG_FILTER_PAETH;
+    default:
+      return PNG_ALL_FILTERS;  // -1 = 自适应
+  }
+}
+
+}  // namespace
+
+Result<std::vector<uint8_t>> encodePng(const Image& image,
+                                       const EncodeParams& params) {
+  if (!image.valid()) {
+    return fail<std::vector<uint8_t>>(Status::InvalidArgument,
+                                      "png: invalid image");
+  }
+  if (image.channels != 1 && image.channels != 3) {
+    return fail<std::vector<uint8_t>>(Status::UnsupportedFormat,
+                                      "png: unsupported channel count");
+  }
+
+  std::vector<uint8_t> out;
+  PngSink sink;
+  sink.out = &out;
+
+  png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr,
+                                            nullptr, nullptr);
+  if (png == nullptr) {
+    return fail<std::vector<uint8_t>>(Status::OutOfMemory,
+                                      "png: create write struct failed");
+  }
+
+  png_infop info = png_create_info_struct(png);
+  if (info == nullptr) {
+    png_destroy_write_struct(&png, nullptr);
+    return fail<std::vector<uint8_t>>(Status::OutOfMemory,
+                                      "png: create info struct failed");
+  }
+
+  if (setjmp(png_jmpbuf(png)) != 0) {
+    png_destroy_write_struct(&png, &info);
+    return fail<std::vector<uint8_t>>(Status::EncodeFailed,
+                                      "png: libpng reported an error");
+  }
+
+  png_set_write_fn(png, &sink, pngWriteMemory, pngFlushMemory);
+  png_set_IHDR(png, info, static_cast<png_uint_32>(image.width),
+               static_cast<png_uint_32>(image.height), 8,
+               image.channels == 1 ? PNG_COLOR_TYPE_GRAY : PNG_COLOR_TYPE_RGB,
+               PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+               PNG_FILTER_TYPE_DEFAULT);
+
+  png_set_compression_level(png, params.png_compression < 0
+                                     ? 6
+                                     : (params.png_compression > 9
+                                            ? 9
+                                            : params.png_compression));
+  png_set_filter(png, 0, filterMask(params.png_filter));
+
+  png_write_info(png, info);
+
+  for (int y = 0; y < image.height; ++y) {
+    png_bytep row = const_cast<png_bytep>(
+        image.pixels.data() + static_cast<size_t>(y) * image.rowBytes());
+    png_write_row(png, row);
+  }
+  png_write_end(png, nullptr);
+
+  png_destroy_write_struct(&png, &info);
+  return out;
+}
+
+Result<Image> decodePng(const uint8_t* data, size_t size) {
+  if (data == nullptr || size == 0) {
+    return fail<Image>(Status::InvalidArgument, "png: empty input");
+  }
+
+  png_image img;
+  std::memset(&img, 0, sizeof(img));
+  img.version = PNG_IMAGE_VERSION;
+
+  if (png_image_begin_read_from_memory(&img, data, size) == 0) {
+    return fail<Image>(Status::DecodeFailed,
+                       std::string("png: ") + img.message);
+  }
+
+  // 通道保真：只有原图确实是灰度时才输出 1 通道，绝不升维成 3 通道。
+  // 灰度 8-bit 的简化 API 格式就是 0（无任何 FORMAT_FLAG）。
+  const bool color =
+      (img.format & (PNG_FORMAT_FLAG_COLOR | PNG_FORMAT_FLAG_COLORMAP)) != 0;
+  img.format = color ? PNG_FORMAT_RGB : 0;
+
+  Image out;
+  out.width = static_cast<int>(img.width);
+  out.height = static_cast<int>(img.height);
+  out.channels = color ? 3 : 1;
+  out.pixels.resize(PNG_IMAGE_SIZE(img));
+
+  if (png_image_finish_read(&img, nullptr, out.pixels.data(), 0, nullptr) == 0) {
+    png_image_free(&img);
+    return fail<Image>(Status::DecodeFailed,
+                       std::string("png: ") + img.message);
+  }
+
+  png_image_free(&img);
+  return out;
+}
+
+Result<int> probePngChannels(const uint8_t* data, size_t size) {
+  // 签名(8) + IHDR 长度(4) + "IHDR"(4) + width(4) + height(4) + bitdepth(1)
+  //   + colortype(1) —— 共 26 字节即可回答。
+  static const uint8_t kSignature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A,
+                                        0x0A};
+  if (data == nullptr || size < 26 ||
+      std::memcmp(data, kSignature, sizeof(kSignature)) != 0) {
+    return fail<int>(Status::UnsupportedFormat, "png: bad signature");
+  }
+  if (std::memcmp(data + 12, "IHDR", 4) != 0) {
+    return fail<int>(Status::UnsupportedFormat, "png: IHDR not first");
+  }
+
+  // color type：0 = 灰度，2 = RGB，3 = 调色板，4 = 灰度+alpha，6 = RGBA。
+  // 调色板按 3 通道算：解出来就是彩色，不是「原图是灰度」。
+  const uint8_t color_type = data[25];
+  return (color_type == 0 || color_type == 4) ? 1 : 3;
+}
+
+}  // namespace cpu
+}  // namespace offload
+}  // namespace image_codec
