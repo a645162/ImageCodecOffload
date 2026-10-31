@@ -24,6 +24,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -54,8 +56,123 @@ void printUsage() {
       "                        [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]\n"
+      "  ico matrix <input.bmp> <output-dir>\n"
       "\n"
       "in/out 的格式由文件内容（魔数）与扩展名共同决定；BMP 只用于中转。\n");
+}
+
+bool writeFile(const std::string &path, const std::vector<uint8_t> &data,
+               std::string *err);
+bool loadImage(Router &router, const std::string &path, Image *out,
+               std::string *err);
+long long nowMicros();
+
+const char *formatSuffix(const Format format) {
+  switch (format) {
+  case Format::Jpeg:
+    return "jpg";
+  case Format::Tiff:
+    return "tiff";
+  case Format::Png:
+    return "png";
+  case Format::Jpeg2000:
+    return "jp2";
+  case Format::JpegXl:
+    return "jxl";
+  case Format::Unknown:
+    return "bin";
+  }
+  return "bin";
+}
+
+int cmdMatrix(const std::string &input, const std::string &output_dir) {
+  Router router;
+  std::string error;
+  Image source;
+  if (!loadImage(router, input, &source, &error)) {
+    std::fprintf(stderr, "error: %s\n", error.c_str());
+    return 1;
+  }
+
+  std::error_code directory_error;
+  std::filesystem::create_directories(output_dir, directory_error);
+  if (directory_error) {
+    std::fprintf(stderr, "error: cannot create matrix directory: %s\n",
+                 directory_error.message().c_str());
+    return 1;
+  }
+  std::ofstream manifest(std::filesystem::path(output_dir) / "manifest.csv",
+                         std::ios::trunc);
+  if (!manifest) {
+    std::fprintf(stderr, "error: cannot create matrix manifest\n");
+    return 1;
+  }
+  manifest << "backend,format,status,bytes,width,height,channels,elapsed_ms,error\n";
+
+  const std::vector<BackendKind> backends = {
+      BackendKind::Cpu, BackendKind::OpenCl, BackendKind::Cuda,
+      BackendKind::Vulkan};
+  const std::vector<Format> formats = {
+      Format::Jpeg, Format::Tiff, Format::Png, Format::Jpeg2000,
+      Format::JpegXl};
+  bool hard_failure = false;
+  for (const BackendKind backend : backends) {
+    for (const Format format : formats) {
+      const std::string backend_name =
+          image_codec::offload::backendName(backend);
+      const std::string format_name = image_codec::offload::formatName(format);
+      const auto output = std::filesystem::path(output_dir) /
+                          (backend_name + "-" + format_name + "." +
+                           formatSuffix(format));
+      const long long start = nowMicros();
+      auto encoded = router.encodeWith(backend, format, source, EncodeParams{});
+      const double elapsed = static_cast<double>(nowMicros() - start) / 1000.0;
+      if (!encoded) {
+        const auto status = encoded.error().code;
+        const std::string escaped = encoded.error().message;
+        manifest << backend_name << ',' << format_name << ','
+                 << (status == image_codec::offload::Status::BackendUnavailable ||
+                             status == image_codec::offload::Status::UnsupportedFormat
+                         ? "skipped"
+                         : "failed")
+                 << ",0,0,0,0," << elapsed << ",\"" << escaped << "\"\n";
+        if (status != image_codec::offload::Status::BackendUnavailable &&
+            status != image_codec::offload::Status::UnsupportedFormat) {
+          hard_failure = true;
+        }
+        continue;
+      }
+      if (!writeFile(output.string(), *encoded, &error)) {
+        manifest << backend_name << ',' << format_name
+                 << ",failed,0,0,0,0," << elapsed << ",\"" << error
+                 << "\"\n";
+        hard_failure = true;
+        continue;
+      }
+      auto decoded = router.decodeWith(backend, format, encoded->data(),
+                                       encoded->size());
+      if (!decoded || decoded->width != source.width ||
+          decoded->height != source.height ||
+          decoded->channels != source.channels) {
+        const std::string message =
+            decoded ? "decoded geometry/channel mismatch"
+                    : decoded.error().message;
+        manifest << backend_name << ',' << format_name
+                 << ",failed," << encoded->size() << ",0,0,0," << elapsed
+                 << ",\"" << message << "\"\n";
+        hard_failure = true;
+        continue;
+      }
+      manifest << backend_name << ',' << format_name << ",passed,"
+               << encoded->size() << ',' << decoded->width << ','
+               << decoded->height << ',' << decoded->channels << ',' << elapsed
+               << ",\"\"\n";
+      std::printf("matrix %-6s %-9s passed (%zu bytes, %.1f ms)\n",
+                  backend_name.c_str(), format_name.c_str(), encoded->size(),
+                  elapsed);
+    }
+  }
+  return hard_failure ? 1 : 0;
 }
 
 bool readFile(const std::string &path, std::vector<uint8_t> *out,
@@ -522,6 +639,14 @@ int main(int argc, char **argv) {
       return 1;
     }
     return cmdCompare(positional[0], positional[1], force, forced_kind);
+  }
+
+  if (command == "matrix") {
+    if (positional.size() != 2 || force) {
+      printUsage();
+      return 1;
+    }
+    return cmdMatrix(positional[0], positional[1]);
   }
 
   std::fprintf(stderr, "error: unknown command: %s\n", command.c_str());
