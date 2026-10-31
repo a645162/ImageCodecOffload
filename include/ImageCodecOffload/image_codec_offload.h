@@ -75,6 +75,13 @@ typedef enum ico_backend {
   ICO_BACKEND_VULKAN = 3
 } ico_backend;
 
+typedef enum ico_execution_mode {
+  ICO_EXECUTION_UNAVAILABLE = 0,
+  ICO_EXECUTION_CPU = 1,
+  ICO_EXECUTION_HYBRID_CPU_GPU = 2,
+  ICO_EXECUTION_NATIVE_GPU = 3
+} ico_execution_mode;
+
 // 解码产物 / 编码输入。
 //   channels：1 = 灰度、2 = 灰度+Alpha、3 = RGB、4 = RGBA（Alpha 非预乘）。
 //   与 PNG 的四种颜色类型一一对应；PNG / TIFF 全支持，JPEG 没有 Alpha 样本，
@@ -205,6 +212,10 @@ ICO_API ico_status image_codec_offload_last_outcome(ico_codec *codec,
                                                     int *used_backend,
                                                     char *detail,
                                                     size_t detail_capacity);
+
+// 最近一次成功/失败调用所选择的执行模式；与 last_outcome 的后端字段配对。
+ICO_API ico_status image_codec_offload_last_execution_mode(
+    ico_codec *codec, int *mode);
 
 // 这个句柄当前能表达的编码参数（见 ico_encode_capabilities）。
 // 自动模式下是**各后端的并集**：某个后端不支持时路由层会换下一个，

@@ -1387,6 +1387,17 @@ void testCapiAdvancedParams() {
     return out;
   };
 
+  ico_encode_params mode_params{};
+  const auto mode_bytes = encode(ICO_FORMAT_JPEG, mode_params);
+  check(!mode_bytes.empty(), "mode query has a successful encode");
+  int mode = ICO_EXECUTION_UNAVAILABLE;
+  check(image_codec_offload_last_execution_mode(cpu, &mode) == ICO_OK,
+        "last execution mode query");
+  check(mode == ICO_EXECUTION_CPU, "forced CPU reports CPU execution mode");
+  check(image_codec_offload_last_execution_mode(nullptr, &mode) ==
+            ICO_ERR_INVALID_ARGUMENT,
+        "execution mode query rejects null codec");
+
   // 清零结构体 == 内部默认值：JPEG / TIFF 成立（这些字段里 0 不是合法取值）。
   Router router;
   const std::pair<int, Format> zeroed_formats[] = {

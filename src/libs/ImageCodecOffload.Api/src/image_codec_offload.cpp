@@ -27,6 +27,7 @@
 using image_codec::offload::BackendKind;
 using image_codec::offload::EncodeParams;
 using image_codec::offload::Error;
+using image_codec::offload::ExecutionMode;
 using image_codec::offload::Format;
 using image_codec::offload::Image;
 using image_codec::offload::Outcome;
@@ -45,6 +46,7 @@ struct ico_codec {
 
   // 最近一次调用的诊断信息。不是线程安全的，与整套 API 的约定一致。
   int last_backend = ICO_BACKEND_AUTO;
+  int last_execution_mode = ICO_EXECUTION_UNAVAILABLE;
   std::string last_detail;
 };
 
@@ -211,8 +213,25 @@ std::string joinNotes(const Outcome& outcome) {
   return joined;
 }
 
-void record(ico_codec* codec, const Outcome& outcome) {
+int toIcoExecutionMode(const ExecutionMode mode) {
+  switch (mode) {
+    case ExecutionMode::Cpu:
+      return ICO_EXECUTION_CPU;
+    case ExecutionMode::HybridCpuGpu:
+      return ICO_EXECUTION_HYBRID_CPU_GPU;
+    case ExecutionMode::NativeGpu:
+      return ICO_EXECUTION_NATIVE_GPU;
+    case ExecutionMode::Unavailable:
+      return ICO_EXECUTION_UNAVAILABLE;
+  }
+  return ICO_EXECUTION_UNAVAILABLE;
+}
+
+void record(ico_codec* codec, const Outcome& outcome,
+            const Format format = Format::Unknown) {
   codec->last_backend = static_cast<int>(outcome.used);
+  codec->last_execution_mode = toIcoExecutionMode(
+      codec->router.executionMode(outcome.used, format));
   codec->last_detail = joinNotes(outcome);
 }
 
@@ -334,6 +353,12 @@ ico_status image_codec_offload_last_outcome(ico_codec* codec, int* used_backend,
   return ICO_OK;
 }
 
+ico_status image_codec_offload_last_execution_mode(ico_codec* codec, int* mode) {
+  if (codec == nullptr || mode == nullptr) return ICO_ERR_INVALID_ARGUMENT;
+  *mode = codec->last_execution_mode;
+  return ICO_OK;
+}
+
 ico_status
 image_codec_offload_encode_capabilities(ico_codec* codec,
                                         ico_encode_capabilities* out) {
@@ -405,7 +430,7 @@ ico_status image_codec_offload_decode(ico_codec* codec, int format,
           : codec->router.decode(fmt, static_cast<const uint8_t*>(in), in_len,
                                  &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
-  record(codec, outcome);
+  record(codec, outcome, fmt);
   if (!decoded) return mapStatus(decoded.error().code);
 
   if (!exportImage(*decoded, out)) {
@@ -436,7 +461,7 @@ ico_status image_codec_offload_encode(ico_codec* codec, int format,
                            : codec->router.encode(fmt, image,
                                                   toParams(params), &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
-  record(codec, outcome);
+  record(codec, outcome, fmt);
   if (!encoded) return mapStatus(encoded.error().code);
 
   // 先查后写：缓冲不足时把所需大小写回，调用方据此扩容。
