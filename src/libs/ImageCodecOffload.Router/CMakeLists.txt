@@ -28,6 +28,14 @@ if(IMAGECODEC_OFFLOAD_WITH_OPENCL)
     IMAGECODEC_OFFLOAD_WITH_OPENCL=1)
   target_link_libraries(ImageCodecOffload.Router PRIVATE
     OpenCLImageCodec.Api)
+  if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+    target_compile_definitions(ImageCodecOffload.Router PRIVATE
+      IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
+  endif()
+  if(IMAGECODEC_OFFLOAD_WITH_JXL)
+    target_compile_definitions(ImageCodecOffload.Router PRIVATE
+      IMAGECODEC_OFFLOAD_WITH_JXL=1)
+  endif()
 endif()
 
 if(IMAGECODEC_OFFLOAD_WITH_CUDA)

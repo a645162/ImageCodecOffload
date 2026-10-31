@@ -17,6 +17,8 @@
 #include <cstring>
 #include <vector>
 
+#include "cpu_backend.h"
+
 namespace image_codec {
 namespace offload {
 
@@ -78,6 +80,23 @@ bool toCApiImage(const Image &src, image_codec_image *out) {
   return true;
 }
 
+Result<Image> fromCApiImage(const image_codec_image &src) {
+  Image out;
+  out.width = static_cast<int>(src.width);
+  out.height = static_cast<int>(src.height);
+  out.channels = static_cast<int>(src.channels);
+  const size_t tight = out.rowBytes();
+  if (src.data == nullptr || src.stride < tight) {
+    return fail<Image>(Status::DecodeFailed, "opencl: invalid staged image");
+  }
+  out.pixels.resize(tight * static_cast<size_t>(out.height));
+  for (int y = 0; y < out.height; ++y) {
+    std::memcpy(out.pixels.data() + static_cast<size_t>(y) * tight,
+                src.data + static_cast<size_t>(y) * src.stride, tight);
+  }
+  return out;
+}
+
 class OpenClBackend final : public ICodecBackend {
 public:
   OpenClBackend() = default;
@@ -91,8 +110,19 @@ public:
   bool supports(Format format) const override {
     // TIFF / PNG / JPEG 三个格式都有 GPU 参与的重活：TIFF=LZW 编码、PNG=行滤波、
     // JPEG=DCT/颜色变换。容器与熵编码仍留在 CPU（见 docs/README.md 能力矩阵）。
-    return format == Format::Jpeg || format == Format::Tiff ||
-           format == Format::Png;
+    if (format == Format::Jpeg || format == Format::Tiff ||
+        format == Format::Png) {
+      return true;
+    }
+#if defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG) && defined(IMAGECODEC_OFFLOAD_WITH_JXL)
+    return format == Format::Jpeg2000 || format == Format::JpegXl;
+#elif defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+    return format == Format::Jpeg2000;
+#elif defined(IMAGECODEC_OFFLOAD_WITH_JXL)
+    return format == Format::JpegXl;
+#else
+    return false;
+#endif
   }
 
   ExecutionMode executionMode(Format format) const override {
@@ -125,8 +155,37 @@ public:
           Status::UnsupportedFormat,
           std::string("opencl: format not supported: ") + formatName(format));
     }
+    // OpenCL 的 TIFF 路径目前只实现 NONE(1) 与 LZW(5)。把其它压缩方式
+    // 明确归类为「该后端不支持」，让 Router 自动模式回退 CPU；不能把它
+    // 继续交给 C API 再得到 invalid-argument，否则回退边界会被破坏。
+    if (format == Format::Tiff && params.tiff_compression != 1 &&
+        params.tiff_compression != 5) {
+      return fail<std::vector<uint8_t>>(
+          Status::UnsupportedFormat,
+          "opencl: tiff compression is limited to none or lzw");
+    }
     if (auto ok = available(); !ok) {
       return std::unexpected(ok.error());
+    }
+
+    if (format == Format::Jpeg2000 || format == Format::JpegXl) {
+      image_codec_image input{};
+      if (!toCApiImage(image, &input)) {
+        return fail<std::vector<uint8_t>>(Status::OutOfMemory,
+                                          "opencl: image copy failed");
+      }
+      image_codec_image staged{};
+      const image_codec_status stage =
+          image_codec_codec_gpu_stage(codec_, &input, &staged);
+      image_codec_image_free(&input);
+      if (stage != IMAGE_CODEC_OK) {
+        return std::unexpected(makeError(mapStatus(stage), "gpu-stage", stage));
+      }
+      auto staged_image = fromCApiImage(staged);
+      image_codec_image_free(&staged);
+      if (!staged_image) return std::unexpected(staged_image.error());
+      cpu::CpuBackend cpu;
+      return cpu.encode(format, *staged_image, params);
     }
     // 通道保真：1..4 都原样交给后端，后端不会再升维或丢 Alpha。
     // 具体格式能不能表示某种通道数（例如 JPEG 没有 Alpha）由后端自己回答，
@@ -196,6 +255,26 @@ public:
                              formatName(format));
     }
     if (auto ok = available(); !ok) return std::unexpected(ok.error());
+
+    if (format == Format::Jpeg2000 || format == Format::JpegXl) {
+      cpu::CpuBackend cpu;
+      auto decoded = cpu.decode(format, data, size);
+      if (!decoded) return std::unexpected(decoded.error());
+      image_codec_image input{};
+      if (!toCApiImage(*decoded, &input)) {
+        return fail<Image>(Status::OutOfMemory, "opencl: image copy failed");
+      }
+      image_codec_image staged{};
+      const image_codec_status stage =
+          image_codec_codec_gpu_stage(codec_, &input, &staged);
+      image_codec_image_free(&input);
+      if (stage != IMAGE_CODEC_OK) {
+        return std::unexpected(makeError(mapStatus(stage), "gpu-stage", stage));
+      }
+      auto result = fromCApiImage(staged);
+      image_codec_image_free(&staged);
+      return result;
+    }
 
     image_codec_image img{};
     const image_codec_status st = image_codec_codec_decode(
