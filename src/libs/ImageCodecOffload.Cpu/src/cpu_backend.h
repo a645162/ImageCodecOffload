@@ -31,7 +31,14 @@ class CpuBackend final : public ICodecBackend {
   }
 
   ExecutionMode executionMode(Format format) const override {
-    return supports(format) ? ExecutionMode::Cpu : ExecutionMode::Unavailable;
+    if (!supports(format)) return ExecutionMode::Unavailable;
+#if !defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+    if (format == Format::Jpeg2000) return ExecutionMode::Unavailable;
+#endif
+#if !defined(IMAGECODEC_OFFLOAD_WITH_JXL)
+    if (format == Format::JpegXl) return ExecutionMode::Unavailable;
+#endif
+    return ExecutionMode::Cpu;
   }
 
   Result<std::vector<uint8_t>> encode(Format format, const Image& image,

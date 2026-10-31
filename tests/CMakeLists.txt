@@ -21,5 +21,16 @@ target_include_directories(ico_test PRIVATE
   "${PROJECT_SOURCE_DIR}/src/libs/ImageCodecOffload.Cpu/src"
   "${PROJECT_SOURCE_DIR}/src/libs/ImageCodecOffload.Router/src")
 
+# CPU 目标的可选依赖宏是 PRIVATE；测试需要同一事实来断言能力页里的
+# ExecutionMode，不能只看全局 option（option 打开但找不到 port 时仍不可用）。
+if(IMAGECODEC_OFFLOAD_WITH_JXL AND TARGET PkgConfig::JXL_PC)
+  target_compile_definitions(ico_test PRIVATE IMAGECODEC_OFFLOAD_WITH_JXL=1)
+endif()
+if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND
+   (TARGET OpenJPEG::OpenJPEG OR TARGET openjp2_static OR TARGET openjp2 OR
+    TARGET PkgConfig::OPENJPEG_PC))
+  target_compile_definitions(ico_test PRIVATE IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
+endif()
+
 add_test(NAME ico_test COMMAND ico_test)
 set_tests_properties(ico_test PROPERTIES SKIP_RETURN_CODE 2)

@@ -86,9 +86,15 @@ void testExecutionModeContract() {
   check(router.executionMode(BackendKind::Cpu, Format::Jpeg) ==
             ExecutionMode::Cpu,
         "cpu jpeg reports cpu execution mode");
+#ifdef IMAGECODEC_OFFLOAD_WITH_JXL
   check(router.executionMode(BackendKind::Cpu, Format::JpegXl) ==
             ExecutionMode::Cpu,
-        "cpu jpeg-xl reports cpu execution mode");
+        "cpu jpeg-xl execution mode follows build capability");
+#else
+  check(router.executionMode(BackendKind::Cpu, Format::JpegXl) ==
+            ExecutionMode::Unavailable,
+        "cpu jpeg-xl execution mode follows build capability");
+#endif
   check(std::string(image_codec::offload::executionModeName(
             ExecutionMode::HybridCpuGpu)) == "hybrid-cpu-gpu",
         "execution mode has stable display name");
