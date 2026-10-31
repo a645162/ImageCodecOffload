@@ -5,6 +5,7 @@
     "libjpeg-turbo",
     "libpng",
     "libjxl",
+    "glslang",
     "openjpeg",
     "opencl",
     "tiff",
