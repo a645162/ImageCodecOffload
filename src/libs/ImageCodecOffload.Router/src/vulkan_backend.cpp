@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "cpu_backend.h"
+
 namespace image_codec {
 namespace offload {
 
@@ -83,6 +85,23 @@ bool toCApiImage(const Image &src, image_codec_vulkan_image *out) {
   return true;
 }
 
+Result<Image> fromCApiImage(const image_codec_vulkan_image& src) {
+  Image out;
+  out.width = static_cast<int>(src.width);
+  out.height = static_cast<int>(src.height);
+  out.channels = static_cast<int>(src.channels);
+  const size_t tight = out.rowBytes();
+  if (src.data == nullptr || src.stride < tight) {
+    return fail<Image>(Status::DecodeFailed, "vulkan: invalid staged image");
+  }
+  out.pixels.resize(tight * static_cast<size_t>(out.height));
+  for (int y = 0; y < out.height; ++y) {
+    std::memcpy(out.pixels.data() + static_cast<size_t>(y) * tight,
+                src.data + static_cast<size_t>(y) * src.stride, tight);
+  }
+  return out;
+}
+
 class VulkanBackend final : public ICodecBackend {
 public:
   VulkanBackend() = default;
@@ -96,8 +115,19 @@ public:
   bool supports(Format format) const override {
     // 三种格式都支持；通道数（JPEG 的 1/3）由后端 C API 自己回答，
     // 路由层不替它猜——猜错一次就是一次静默降维。
-    return format == Format::Jpeg || format == Format::Tiff ||
-           format == Format::Png;
+    if (format == Format::Jpeg || format == Format::Tiff ||
+        format == Format::Png) {
+      return true;
+    }
+#if defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG) && defined(IMAGECODEC_OFFLOAD_WITH_JXL)
+    return format == Format::Jpeg2000 || format == Format::JpegXl;
+#elif defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+    return format == Format::Jpeg2000;
+#elif defined(IMAGECODEC_OFFLOAD_WITH_JXL)
+    return format == Format::JpegXl;
+#else
+    return false;
+#endif
   }
 
   ExecutionMode executionMode(Format format) const override {
@@ -150,6 +180,24 @@ public:
           std::string("vulkan: format not supported: ") + formatName(format));
     }
     if (auto ok = available(); !ok) return std::unexpected(ok.error());
+    if (format == Format::Jpeg2000 || format == Format::JpegXl) {
+      image_codec_vulkan_image input{};
+      if (!toCApiImage(image, &input)) {
+        return fail<std::vector<uint8_t>>(Status::OutOfMemory,
+                                          "vulkan: image copy failed");
+      }
+      image_codec_vulkan_image staged{};
+      const auto stage = image_codec_vulkan_gpu_stage(codec_, &input, &staged);
+      image_codec_vulkan_image_free(&input);
+      if (stage != IMAGE_CODEC_VULKAN_OK) {
+        return std::unexpected(makeError(mapStatus(stage), "gpu-stage", stage));
+      }
+      auto staged_image = fromCApiImage(staged);
+      image_codec_vulkan_image_free(&staged);
+      if (!staged_image) return std::unexpected(staged_image.error());
+      cpu::CpuBackend cpu;
+      return cpu.encode(format, *staged_image, params);
+    }
     if (!directionReady(format, /*encoding=*/true)) {
       return fail<std::vector<uint8_t>>(
           Status::UnsupportedFormat,
@@ -225,6 +273,24 @@ public:
                              formatName(format));
     }
     if (auto ok = available(); !ok) return std::unexpected(ok.error());
+    if (format == Format::Jpeg2000 || format == Format::JpegXl) {
+      cpu::CpuBackend cpu;
+      auto decoded = cpu.decode(format, data, size);
+      if (!decoded) return std::unexpected(decoded.error());
+      image_codec_vulkan_image input{};
+      if (!toCApiImage(*decoded, &input)) {
+        return fail<Image>(Status::OutOfMemory, "vulkan: image copy failed");
+      }
+      image_codec_vulkan_image staged{};
+      const auto stage = image_codec_vulkan_gpu_stage(codec_, &input, &staged);
+      image_codec_vulkan_image_free(&input);
+      if (stage != IMAGE_CODEC_VULKAN_OK) {
+        return std::unexpected(makeError(mapStatus(stage), "gpu-stage", stage));
+      }
+      auto result = fromCApiImage(staged);
+      image_codec_vulkan_image_free(&staged);
+      return result;
+    }
     if (!directionReady(format, /*encoding=*/false)) {
       return fail<Image>(Status::UnsupportedFormat,
                          std::string("vulkan: decode not available for ") +

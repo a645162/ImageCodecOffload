@@ -43,6 +43,14 @@ if(IMAGECODEC_OFFLOAD_WITH_CUDA)
     IMAGECODEC_OFFLOAD_WITH_CUDA=1)
   target_link_libraries(ImageCodecOffload.Router PRIVATE
     Cuda.Image.Codec.Api)
+  if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+    target_compile_definitions(ImageCodecOffload.Router PRIVATE
+      IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
+  endif()
+  if(IMAGECODEC_OFFLOAD_WITH_JXL)
+    target_compile_definitions(ImageCodecOffload.Router PRIVATE
+      IMAGECODEC_OFFLOAD_WITH_JXL=1)
+  endif()
 endif()
 
 if(IMAGECODEC_OFFLOAD_WITH_VULKAN)
@@ -50,6 +58,14 @@ if(IMAGECODEC_OFFLOAD_WITH_VULKAN)
     IMAGECODEC_OFFLOAD_WITH_VULKAN=1)
   target_link_libraries(ImageCodecOffload.Router PRIVATE
     VulkanImageCodec::CodecApi)
+  if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+    target_compile_definitions(ImageCodecOffload.Router PRIVATE
+      IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
+  endif()
+  if(IMAGECODEC_OFFLOAD_WITH_JXL)
+    target_compile_definitions(ImageCodecOffload.Router PRIVATE
+      IMAGECODEC_OFFLOAD_WITH_JXL=1)
+  endif()
 endif()
 
 add_library(ImageCodecOffload::Router ALIAS ImageCodecOffload.Router)
