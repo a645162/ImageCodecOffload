@@ -1,3 +1,9 @@
+# File: src/libs/CMakeLists.txt
+# Brief: CMake build configuration.
+# Author: Haomin Kong
+# Email: a645162@163.com
+# Created: 2026-10-31
+
 # 本项目的一等库（与主项目 src/libs 同样的组织方式）：每个目录一个静态库，
 # 提供 ImageCodecOffload::<Name> 别名，使用方按需链接。
 add_subdirectory(ImageCodecOffload.Core)   # 类型 / 错误 / 指标 CPU 参考 / 后端接口

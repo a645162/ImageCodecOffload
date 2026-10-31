@@ -1,3 +1,9 @@
+# File: src/libs/ImageCodecOffload.Api/CMakeLists.txt
+# Brief: CMake build configuration.
+# Author: Haomin Kong
+# Email: a645162@163.com
+# Created: 2026-10-31
+
 # 对外 C API（include/ImageCodecOffload/image_codec_offload.h）实现库。
 add_library(ImageCodecOffload.Api STATIC
   src/image_codec_offload.cpp

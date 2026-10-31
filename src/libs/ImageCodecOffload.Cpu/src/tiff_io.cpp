@@ -1,3 +1,11 @@
+/*
+ * File: tiff_io.cpp
+ * Brief: Tiff io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // tiff_io.cpp - libtiff 的编解码基线。
 //
 // 之所以走 TIFFClientOpen + 内存回调，而不是写临时文件：本库的输入输出都在

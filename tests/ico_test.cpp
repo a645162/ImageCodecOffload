@@ -1,3 +1,11 @@
+/*
+ * File: ico_test.cpp
+ * Brief: Ico test.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // ico_test.cpp - 路由层的自检（返回码约定：0 = PASS、2 = SKIP、其它 = FAIL）。
 //
 // 检查的不是「能跑通」，而是四件最容易悄悄错的事：

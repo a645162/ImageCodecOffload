@@ -1,3 +1,11 @@
+/*
+ * File: image_codec_offload.h
+ * Brief: Image codec offload.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // image_codec_offload.h - ImageCodecOffload 对外 C API（纯 C，C11）。
 //
 // 这一层是给**外部程序**（ImageViewer、批处理工具、C# 互操作）用的：它只面向

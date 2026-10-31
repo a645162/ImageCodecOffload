@@ -1,3 +1,11 @@
+/*
+ * File: image_codec_types.cpp
+ * Brief: Image codec types.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // image_codec_types.cpp - 公共类型的字符串化与格式嗅探。
 #include "image_codec_types.h"
 

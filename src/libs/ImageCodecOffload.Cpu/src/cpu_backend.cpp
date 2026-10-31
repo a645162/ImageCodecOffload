@@ -1,3 +1,11 @@
+/*
+ * File: cpu_backend.cpp
+ * Brief: Cpu backend.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // cpu_backend.cpp - CPU 后端的格式分派。
 #include "cpu_backend.h"
 

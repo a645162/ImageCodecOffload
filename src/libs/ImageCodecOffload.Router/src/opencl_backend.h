@@ -1,3 +1,11 @@
+/*
+ * File: opencl_backend.h
+ * Brief: Opencl backend.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // opencl_backend.h - OpenCL 后端适配器（把 OpenCLImageCodec 的 C API 接到 ICodecBackend）。
 //
 // 只在 IMAGECODEC_OFFLOAD_WITH_OPENCL 打开时编译。适配层只做三件事：

@@ -1,3 +1,11 @@
+/*
+ * File: container_probe.h
+ * Brief: Container probe.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // container_probe.h - 只读容器头判断「这张图本来有多少通道」。
 //
 // 为什么需要它：某些后端的 C ABI 只有 24-bit RGB 一种形态（in 与 out 都是）。

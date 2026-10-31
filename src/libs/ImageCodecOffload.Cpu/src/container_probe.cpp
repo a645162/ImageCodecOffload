@@ -1,3 +1,11 @@
+/*
+ * File: container_probe.cpp
+ * Brief: Container probe.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // container_probe.cpp - 按格式分派到各自的「只读头」探测实现。
 //
 // 这里刻意只做分派：每种容器的字段位置与坑都在它自己的 *_io.cpp 里，集中写

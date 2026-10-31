@@ -1,3 +1,11 @@
+/*
+ * File: opencl_backend.cpp
+ * Brief: Opencl backend.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // opencl_backend.cpp - OpenCLImageCodec 的 ICodecBackend 适配。
 #include "opencl_backend.h"
 

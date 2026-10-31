@@ -1,3 +1,11 @@
+/*
+ * File: router.h
+ * Brief: Router.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // router.h - 后端选择与回退（ImageCodecOffload 的核心价值）。
 //
 // 上层只调用 Router，不直接碰任何一个后端：它不知道这台机器有 OpenCL 还是有

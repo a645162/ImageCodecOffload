@@ -1,3 +1,11 @@
+/*
+ * File: bmp_io.cpp
+ * Brief: Bmp io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // bmp_io.cpp - 最小可用的 BMP 读写。
 //
 // BMP 是 little-endian、行尾 4 字节对齐、默认 bottom-up。这三点弄错任何一条，

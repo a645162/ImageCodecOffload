@@ -1,3 +1,11 @@
+/*
+ * File: bmp_io.h
+ * Brief: Bmp io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // bmp_io.h - BMP 读写（纯 CPU，仅用于 CLI 与测试的中转与比对）。
 //
 // 为什么放在 Common 而不是各模块里：三个后端各自都有一份只服务于自测的

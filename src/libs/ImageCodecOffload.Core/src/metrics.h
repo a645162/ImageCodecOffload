@@ -1,3 +1,11 @@
+/*
+ * File: metrics.h
+ * Brief: Metrics.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // metrics.h - 画质指标的 CPU 参考实现（Core 层，纯 C++）。
 //
 // 三个 GPU 后端各自实现了同一套公式（见各子项目 docs/metrics.md），本文件是

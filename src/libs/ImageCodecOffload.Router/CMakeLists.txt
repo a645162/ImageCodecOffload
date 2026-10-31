@@ -1,3 +1,9 @@
+# File: src/libs/ImageCodecOffload.Router/CMakeLists.txt
+# Brief: CMake build configuration.
+# Author: Haomin Kong
+# Email: a645162@163.com
+# Created: 2026-10-31
+
 add_library(ImageCodecOffload.Router STATIC
   src/router.h
   src/router.cpp

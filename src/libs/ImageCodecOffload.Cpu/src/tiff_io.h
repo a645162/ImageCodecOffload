@@ -1,3 +1,11 @@
+/*
+ * File: tiff_io.h
+ * Brief: Tiff io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // tiff_io.h - TIFF 的 CPU 基线实现（libtiff）。
 //
 // 存在的意义有两个：一是没有可用 GPU 时的兜底，二是给 GPU 后端一个「同样

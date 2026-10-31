@@ -1,3 +1,11 @@
+/*
+ * File: jpeg_io.h
+ * Brief: Jpeg io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // jpeg_io.h - baseline JPEG 的 CPU 基线实现（libjpeg-turbo）。
 //
 // 与 OpenCL / CUDA 后端一致：只做 baseline（SOF0），不支持渐进式编码；

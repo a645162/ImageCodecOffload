@@ -1,3 +1,11 @@
+/*
+ * File: router.cpp
+ * Brief: Router.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // router.cpp - 后端注册、选择与回退。
 #include "router.h"
 

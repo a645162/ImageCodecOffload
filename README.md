@@ -1,3 +1,11 @@
+<!--
+ * File: README.md
+ * Brief: ImageCodecOffload.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-08-12
+-->
+
 # ImageCodecOffload
 
 大图（GB 级 BMP/TIFF/PNG）图像编解码卸载仓库：三个 GPU 后端（CUDA / OpenCL / Vulkan）

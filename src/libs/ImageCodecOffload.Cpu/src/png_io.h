@@ -1,3 +1,11 @@
+/*
+ * File: png_io.h
+ * Brief: Png io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // png_io.h - PNG 的 CPU 基线实现（libpng）。
 //
 // 编码用完整 libpng API（需要 compression_level / filter 两个参数，

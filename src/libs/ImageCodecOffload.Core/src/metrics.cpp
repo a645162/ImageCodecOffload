@@ -1,3 +1,11 @@
+/*
+ * File: metrics.cpp
+ * Brief: Metrics.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // metrics.cpp - 画质指标的 CPU 参考实现。
 //
 // 与子项目的 metrics_cpu.cpp 逐项对应：SSIM 的常数、边界策略、金字塔下采样

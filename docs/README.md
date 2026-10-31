@@ -1,3 +1,11 @@
+<!--
+ * File: README.md
+ * Brief: ImageCodecOffload.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-08-12
+-->
+
 # ImageCodecOffload
 
 图像编解码卸载仓库（git submodule，内部为嵌套 submodule）。它既是各 GPU 后端的集合，

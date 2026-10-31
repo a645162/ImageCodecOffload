@@ -1,3 +1,11 @@
+/*
+ * File: png_io.cpp
+ * Brief: Png io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // png_io.cpp - libpng 的编解码基线。
 //
 // libpng 的错误模型是 setjmp/longjmp：任何一次读写在内部失败都会跳到我们

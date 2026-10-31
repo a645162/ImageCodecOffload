@@ -1,3 +1,11 @@
+<!--
+ * File: AGENTS.md
+ * Brief: AGENTS.md.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-08-12
+-->
+
 # AGENTS.md
 
 ## 提交与推送规范

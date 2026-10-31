@@ -1,3 +1,11 @@
+/*
+ * File: image_codec_types.h
+ * Brief: Image codec types.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // image_codec_types.h - ImageCodecOffload 公共类型（纯 C++，不依赖任何后端）。
 //
 // 这一层刻意不包含任何编解码实现：格式分派、后端选择、回退策略都在上层，

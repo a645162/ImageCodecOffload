@@ -1,3 +1,11 @@
+/*
+ * File: image_codec_offload.cpp
+ * Brief: Image codec offload.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // image_codec_offload.cpp - 本库的 C API 实现。
 //
 // 这一层只做三件事：参数校验、ico_* 与内部 C++ 类型之间的转换、把一次调用的

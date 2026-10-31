@@ -1,3 +1,11 @@
+/*
+ * File: main.cpp
+ * Brief: Main.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // main.cpp - ico：ImageCodecOffload 的命令行入口。
 //
 // 它同时是「本库能不能用」的最小证据与调参外壳：

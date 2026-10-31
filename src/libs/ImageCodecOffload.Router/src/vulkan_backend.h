@@ -1,7 +1,7 @@
 // File      : vulkan_backend.h
 // Brief     : Vulkan 后端适配器（把 ImageCodecVulkan 的 C API 接到 ICodecBackend）
 // Author    : 孔昊旻(Haomin Kong)
-// Email     : <a645162@qq.com> / <konghm@beim.com.cn>
+// Email     : a645162@163.com
 // Created   : 2026-10-31
 #pragma once
 

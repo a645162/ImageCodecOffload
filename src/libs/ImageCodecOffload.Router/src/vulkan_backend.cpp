@@ -1,7 +1,7 @@
 // File      : vulkan_backend.cpp
 // Brief     : ImageCodecVulkan 的 ICodecBackend 适配
 // Author    : 孔昊旻(Haomin Kong)
-// Email     : <a645162@qq.com> / <konghm@beim.com.cn>
+// Email     : a645162@163.com
 // Created   : 2026-10-31
 //
 // 与 CUDA / OpenCL 适配层同样只做三件事：结构体转换、状态码映射、失败原因补

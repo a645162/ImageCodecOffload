@@ -1,3 +1,11 @@
+/*
+ * File: backend.h
+ * Brief: Backend.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // backend.h - 编解码后端接口（CPU / OpenCL / CUDA / Vulkan 各自实现）。
 //
 // 接口刻意「粗粒度」：一次调用编一整个内存 buffer，而不是暴露窗口/缓冲句柄。

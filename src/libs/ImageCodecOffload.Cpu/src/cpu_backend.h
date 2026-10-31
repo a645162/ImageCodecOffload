@@ -1,3 +1,11 @@
+/*
+ * File: cpu_backend.h
+ * Brief: Cpu backend.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // cpu_backend.h - CPU 后端（libtiff / libpng / libjpeg-turbo）。
 //
 // 它同时承担两个角色：没有可用 GPU 时的兜底，以及 GPU 后端的像素级参照。

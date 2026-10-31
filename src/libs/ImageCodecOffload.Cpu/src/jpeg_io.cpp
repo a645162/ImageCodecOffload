@@ -1,3 +1,11 @@
+/*
+ * File: jpeg_io.cpp
+ * Brief: Jpeg io.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-10-31
+ */
+
 // jpeg_io.cpp - libjpeg-turbo 的 baseline JPEG 编解码基线。
 //
 // libjpeg 的错误模型同样是 setjmp/longjmp（jpeg_error_mgr::error_exit）。

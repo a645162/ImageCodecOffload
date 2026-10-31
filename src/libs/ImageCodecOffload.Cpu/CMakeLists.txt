@@ -1,3 +1,9 @@
+# File: src/libs/ImageCodecOffload.Cpu/CMakeLists.txt
+# Brief: CMake build configuration.
+# Author: Haomin Kong
+# Email: a645162@163.com
+# Created: 2026-10-31
+
 add_library(ImageCodecOffload.Cpu STATIC
   src/tiff_io.h
   src/tiff_io.cpp
