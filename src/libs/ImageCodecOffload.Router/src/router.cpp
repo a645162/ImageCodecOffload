@@ -232,6 +232,11 @@ std::vector<BackendKind> Router::availableBackends() const {
   return out;
 }
 
+bool Router::supports(const BackendKind kind, const Format format) const {
+  const auto *backend = find(kind);
+  return backend != nullptr && backend->supports(format);
+}
+
 std::vector<std::pair<BackendKind, std::string>> Router::probeBackends() const {
   std::vector<std::pair<BackendKind, std::string>> out;
   out.reserve(backends_.size());
