@@ -140,10 +140,19 @@ struct Image {
   }
 };
 
+// JPEG 2000 的后缀既可能表示 JP2 容器，也可能表示裸 J2K 码流。
+// JPF/JPX 仍使用 JP2 家族容器；该选择只影响编码，不影响统一的 Format 枚举。
+enum class Jpeg2000Container {
+  Jp2 = 0,
+  J2k = 1,
+};
+
 // ---- 编码参数 ----
 // 字段按目标格式选用；未用到的字段保持默认值即可。
 // 大图调优出来的数字请写进调用方自己的配置（机器相关），不要改这里的默认值。
 struct EncodeParams {
+  Jpeg2000Container jpeg2000_container = Jpeg2000Container::Jp2;
+
   // JPEG
   int jpeg_quality = 90;      // 1..100
   int jpeg_subsampling = 420; // 444 / 422 / 420

@@ -111,17 +111,14 @@ opj_codec_t *makeCodec(Format format, bool encode) {
 
 } // namespace
 
-Result<std::vector<uint8_t>> encodeJpeg2000(const Image &image, Format format) {
-  if (!image.valid() || (format != Format::Jpeg2000 && format != Format::JpegXl))
+Result<std::vector<uint8_t>> encodeJpeg2000(const Image &image,
+                                            Jpeg2000Container container) {
+  if (!image.valid())
     return fail<std::vector<uint8_t>>(Status::InvalidArgument,
                                       "openjpeg: invalid image or format");
   if (image.channels != 1 && image.channels != 3)
     return fail<std::vector<uint8_t>>(Status::UnsupportedFormat,
                                       "openjpeg: only gray and RGB are supported");
-  if (format == Format::JpegXl)
-    return fail<std::vector<uint8_t>>(Status::UnsupportedFormat,
-                                      "jpeg-xl requires libjxl");
-
   opj_cparameters_t parameters;
   opj_set_default_encoder_parameters(&parameters);
   parameters.tcp_numlayers = 1;
@@ -158,13 +155,16 @@ Result<std::vector<uint8_t>> encodeJpeg2000(const Image &image, Format format) {
       component.data[pixel] = image.pixels[pixel * image.channels + channel];
   }
 
+  const bool rawCodestream = container == Jpeg2000Container::J2k;
   const auto path = std::filesystem::temp_directory_path() /
                     ("imagecodec-jp2-" +
                      std::to_string(std::chrono::high_resolution_clock::now()
                                         .time_since_epoch()
                                         .count()) +
-                     ".jp2");
-  opj_codec_t *codec = makeCodec(Format::Jpeg2000, true);
+                     (rawCodestream ? ".j2k" : ".jp2"));
+  opj_codec_t *codec = makeCodec(rawCodestream ? Format::Unknown
+                                               : Format::Jpeg2000,
+                                 true);
   opj_stream_t *stream = codec == nullptr
                              ? nullptr
                              : opj_stream_create_default_file_stream(

@@ -34,6 +34,7 @@ using image_codec::offload::EncodeParams;
 using image_codec::offload::ExecutionMode;
 using image_codec::offload::Format;
 using image_codec::offload::Image;
+using image_codec::offload::Jpeg2000Container;
 using image_codec::offload::Router;
 using image_codec::offload::SsimResult;
 using image_codec::offload::Status;
@@ -124,6 +125,26 @@ void testJpeg2000CpuRoundtrip() {
     check(decoded->width == source.width && decoded->height == source.height,
           "jpeg2000 geometry");
     check(decoded->channels == source.channels, "jpeg2000 channels");
+  }
+
+  EncodeParams j2k_params;
+  j2k_params.jpeg2000_container = Jpeg2000Container::J2k;
+  auto j2k = router.encodeWith(BackendKind::Cpu, Format::Jpeg2000, source,
+                               j2k_params);
+  check(static_cast<bool>(j2k), "j2k codestream cpu encode");
+  if (j2k) {
+    check(j2k->size() >= 4 && (*j2k)[0] == 0xff && (*j2k)[1] == 0x4f &&
+              (*j2k)[2] == 0xff && (*j2k)[3] == 0x51,
+          "j2k output has codestream marker");
+    auto decoded_j2k = router.decodeWith(BackendKind::Cpu, Format::Jpeg2000,
+                                         j2k->data(), j2k->size());
+    check(static_cast<bool>(decoded_j2k), "j2k codestream cpu decode");
+    if (decoded_j2k) {
+      check(decoded_j2k->width == source.width &&
+                decoded_j2k->height == source.height &&
+                decoded_j2k->channels == source.channels,
+            "j2k codestream geometry");
+    }
   }
 }
 

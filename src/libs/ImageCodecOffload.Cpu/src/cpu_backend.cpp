@@ -61,7 +61,7 @@ Result<std::vector<uint8_t>> CpuBackend::encode(Format format,
       return encodePng(image, params);
     case Format::Jpeg2000:
 #ifdef IMAGECODEC_OFFLOAD_WITH_OPENJPEG
-      return encodeJpeg2000(image, Format::Jpeg2000);
+      return encodeJpeg2000(image, params.jpeg2000_container);
 #else
       return fail<std::vector<uint8_t>>(Status::BackendUnavailable,
                                         "cpu: OpenJPEG is not built");

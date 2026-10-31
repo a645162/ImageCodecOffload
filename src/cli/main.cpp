@@ -411,10 +411,24 @@ int cmdEncode(const std::string &in, const std::string &out,
     return 1;
   }
 
+  // JPEG 2000 的 .j2k 是裸码流；.jp2/.jpf/.jpx 属于 JP2 容器家族。
+  EncodeParams effective_params = params;
+  if (format == Format::Jpeg2000 && dot != std::string::npos) {
+    std::string extension = out.substr(dot);
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) {
+                     return static_cast<char>(std::tolower(ch));
+                   });
+    if (extension == ".j2k") {
+      effective_params.jpeg2000_container =
+          image_codec::offload::Jpeg2000Container::J2k;
+    }
+  }
+
   const long long t0 = nowMicros();
   image_codec::offload::Outcome outcome;
-  auto encoded = force ? router.encodeWith(kind, format, image, params)
-                       : router.encode(format, image, params, &outcome);
+  auto encoded = force ? router.encodeWith(kind, format, image, effective_params)
+                       : router.encode(format, image, effective_params, &outcome);
   const long long t1 = nowMicros();
 
   if (!encoded) {

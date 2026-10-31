@@ -8,7 +8,8 @@
 
 namespace image_codec::offload::cpu {
 
-Result<std::vector<uint8_t>> encodeJpeg2000(const Image &image, Format format);
+Result<std::vector<uint8_t>> encodeJpeg2000(const Image &image,
+                                            Jpeg2000Container container);
 Result<Image> decodeJpeg2000(const uint8_t *data, size_t size);
 
 } // namespace image_codec::offload::cpu
