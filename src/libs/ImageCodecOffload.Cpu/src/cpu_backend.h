@@ -26,7 +26,7 @@ class CpuBackend final : public ICodecBackend {
 
   bool supports(Format format) const override {
     return format == Format::Jpeg || format == Format::Tiff ||
-           format == Format::Png;
+           format == Format::Png || format == Format::Jpeg2000;
   }
 
   Result<std::vector<uint8_t>> encode(Format format, const Image& image,

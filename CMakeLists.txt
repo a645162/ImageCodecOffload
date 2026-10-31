@@ -57,6 +57,13 @@ option(IMAGECODEC_OFFLOAD_BUILD_TESTS "Build the test suite" OFF)
 find_package(TIFF REQUIRED)
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(OPENJPEG_PC QUIET IMPORTED_TARGET libopenjp2)
+endif()
+if(NOT TARGET PkgConfig::OPENJPEG_PC)
+  find_package(OpenJPEG CONFIG QUIET)
+endif()
 
 if(IMAGECODEC_OFFLOAD_WITH_CUDA)
   # 子项目的 CMakeLists 也会 project(... LANGUAGES ... CUDA)，这里先启用一次，

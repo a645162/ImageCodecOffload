@@ -12,6 +12,7 @@
 #include <tiffio.h>
 
 #include "jpeg_io.h"
+#include "openjpeg_io.h"
 #include "metrics.h"
 #include "png_io.h"
 #include "tiff_io.h"
@@ -57,6 +58,16 @@ Result<std::vector<uint8_t>> CpuBackend::encode(Format format,
       return encodeTiff(image, params);
     case Format::Png:
       return encodePng(image, params);
+    case Format::Jpeg2000:
+#ifdef IMAGECODEC_OFFLOAD_WITH_OPENJPEG
+      return encodeJpeg2000(image, Format::Jpeg2000);
+#else
+      return fail<std::vector<uint8_t>>(Status::BackendUnavailable,
+                                        "cpu: OpenJPEG is not built");
+#endif
+    case Format::JpegXl:
+      return fail<std::vector<uint8_t>>(Status::BackendUnavailable,
+                                        "cpu: libjxl is not built");
     case Format::Unknown:
       break;
   }
@@ -73,6 +84,16 @@ Result<Image> CpuBackend::decode(Format format, const uint8_t* data,
       return decodeTiff(data, size);
     case Format::Png:
       return decodePng(data, size);
+    case Format::Jpeg2000:
+#ifdef IMAGECODEC_OFFLOAD_WITH_OPENJPEG
+      return decodeJpeg2000(data, size);
+#else
+      return fail<Image>(Status::BackendUnavailable,
+                         "cpu: OpenJPEG is not built");
+#endif
+    case Format::JpegXl:
+      return fail<Image>(Status::BackendUnavailable,
+                         "cpu: libjxl is not built");
     case Format::Unknown:
       break;
   }

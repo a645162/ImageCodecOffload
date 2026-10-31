@@ -48,6 +48,8 @@ void check(bool ok, const char *what) {
   }
 }
 
+Image makeImage(int w, int h, int c);
+
 void testFormatCatalogAndProbe() {
   const auto &descriptors = image_codec::offload::formatDescriptors();
   check(descriptors.size() == 5, "format catalog has five formats");
@@ -67,6 +69,28 @@ void testFormatCatalogAndProbe() {
                          0x0A, 0x87, 0x0A};
   check(image_codec::offload::probeFormat(jxl, sizeof(jxl)) == Format::JpegXl,
         "jxl signature");
+}
+
+void testJpeg2000CpuRoundtrip() {
+  Router router;
+  const Image source = makeImage(37, 23, 3);
+  EncodeParams params;
+  auto encoded = router.encodeWith(BackendKind::Cpu, Format::Jpeg2000,
+                                   source, params);
+  if (!encoded) {
+    check(encoded.error().code == Status::BackendUnavailable,
+          "jpeg2000 is either available or explicitly unavailable");
+    return;
+  }
+  check(!encoded->empty(), "jpeg2000 cpu encode");
+  auto decoded = router.decodeWith(BackendKind::Cpu, Format::Jpeg2000,
+                                   encoded->data(), encoded->size());
+  check(static_cast<bool>(decoded), "jpeg2000 cpu decode");
+  if (decoded) {
+    check(decoded->width == source.width && decoded->height == source.height,
+          "jpeg2000 geometry");
+    check(decoded->channels == source.channels, "jpeg2000 channels");
+  }
 }
 
 // 确定性图案（纯渐变会让压缩缺陷被掩盖；这里要的是有局部随机性）。
@@ -1704,6 +1728,7 @@ void testTiffStripSharding() {
 
 int main() {
   testFormatCatalogAndProbe();
+  testJpeg2000CpuRoundtrip();
   testBmpRoundtrip();
   testCpuRoundtrip();
   testCpuChannelMatrix();
