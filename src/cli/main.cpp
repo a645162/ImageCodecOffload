@@ -134,13 +134,10 @@ Format formatFromPathOrBytes(const std::string &path,
       image_codec::offload::probeFormat(data.data(), data.size());
   if (probed != Format::Unknown) return probed;
 
-  if (hasExtension(path, ".jpg") || hasExtension(path, ".jpeg")) {
-    return Format::Jpeg;
+  const std::size_t dot = path.find_last_of('.');
+  if (dot != std::string::npos) {
+    return image_codec::offload::formatFromExtension(path.substr(dot));
   }
-  if (hasExtension(path, ".tif") || hasExtension(path, ".tiff")) {
-    return Format::Tiff;
-  }
-  if (hasExtension(path, ".png")) return Format::Png;
   return Format::Unknown;
 }
 
@@ -287,10 +284,15 @@ int cmdEncode(const std::string &in, const std::string &out,
     return 1;
   }
 
+  const std::size_t dot = out.find_last_of('.');
   const Format format =
-      hasExtension(out, ".jpg") || hasExtension(out, ".jpeg")
-          ? Format::Jpeg
-          : (hasExtension(out, ".png") ? Format::Png : Format::Tiff);
+      dot == std::string::npos
+          ? Format::Unknown
+          : image_codec::offload::formatFromExtension(out.substr(dot));
+  if (format == Format::Unknown) {
+    std::fprintf(stderr, "error: unknown output format: %s\n", out.c_str());
+    return 1;
+  }
 
   const long long t0 = nowMicros();
   image_codec::offload::Outcome outcome;
