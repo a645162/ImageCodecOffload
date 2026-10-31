@@ -101,6 +101,14 @@ class Router {
   // 遇到不支持的后端会换下一个，所以只要有一个能表达，请求就能成立）。
   EncodeCapabilities encodeCapabilities() const;
 
+  // 某一个后端自己的能力表（该后端未编译进来时返回全 false）。
+  //
+  // 强制后端（`ico ... --backend X` / `encodeWith`）必须用这个而不是
+  // `encodeCapabilities()`：并集回答的是「顺序里有没有人能表达」，而强制
+  // 模式没有兜底顺序。用并集就会把「CPU 才有的进阶参数」报告给绑死在这台
+  // GPU 上的 lane，让上层以为能派单，实际编码时被 `encodeWith` 拒绝。
+  EncodeCapabilities encodeCapabilitiesFor(BackendKind kind) const;
+
   // 某个后端能否表达这组参数。支持 → 返回空；不支持 → UnsupportedFormat
   // 并写清**具体是哪一项**，让上层日志能回答「为什么这条 lane 不接这一单」。
   Result<void> checkEncodeParams(BackendKind kind, Format format,

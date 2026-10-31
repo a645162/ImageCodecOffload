@@ -333,7 +333,9 @@ image_codec_offload_encode_capabilities(ico_codec* codec,
                                         ico_encode_capabilities* out) {
   if (codec == nullptr || out == nullptr) return ICO_ERR_INVALID_ARGUMENT;
 
-  const auto caps = codec->router.encodeCapabilities();
+  const auto caps = codec->forced
+                        ? codec->router.encodeCapabilitiesFor(codec->forced_kind)
+                        : codec->router.encodeCapabilities();
   out->jpeg_progressive = caps.jpeg_progressive ? 1 : 0;
   out->jpeg_optimize_huffman = caps.jpeg_optimize_huffman ? 1 : 0;
   out->jpeg_restart_interval = caps.jpeg_restart_interval ? 1 : 0;

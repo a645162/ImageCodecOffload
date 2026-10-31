@@ -249,9 +249,7 @@ EncodeCapabilities Router::encodeCapabilities() const {
   // 在界面上被误判成不支持。
   EncodeCapabilities out;
   for (BackendKind kind : order_) {
-    ICodecBackend *backend = find(kind);
-    if (backend == nullptr) continue;
-    const EncodeCapabilities cap = backend->encodeCapabilities();
+    const EncodeCapabilities cap = encodeCapabilitiesFor(kind);
     out.jpeg_progressive = out.jpeg_progressive || cap.jpeg_progressive;
     out.jpeg_optimize_huffman =
         out.jpeg_optimize_huffman || cap.jpeg_optimize_huffman;
@@ -267,6 +265,14 @@ EncodeCapabilities Router::encodeCapabilities() const {
     out.png_strategy = out.png_strategy || cap.png_strategy;
   }
   return out;
+}
+
+EncodeCapabilities Router::encodeCapabilitiesFor(BackendKind kind) const {
+  // 没编译进来的后端返回全 false（而不是回退到 CPU 的表）：调用方问的是
+  // 「这台设备能做到什么」，CPU 的能力不能替 GPU 回答。
+  ICodecBackend *backend = find(kind);
+  if (backend == nullptr) return {};
+  return backend->encodeCapabilities();
 }
 
 Result<void> Router::checkEncodeParams(BackendKind kind, Format format,

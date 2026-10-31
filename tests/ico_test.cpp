@@ -28,6 +28,7 @@
 #include "router.h"
 
 using image_codec::offload::BackendKind;
+using image_codec::offload::EncodeCapabilities;
 using image_codec::offload::EncodeParams;
 using image_codec::offload::Format;
 using image_codec::offload::Image;
@@ -1150,6 +1151,85 @@ void testCapabilityContract() {
   std::printf("advanced params rejected by gpu backends: %d\n", rejections);
 }
 
+// 强制句柄的能力表必须是**那个后端自己的**，而不是当前顺序的并集。
+//
+// 这里真的错过一次：`ico_encode_capabilities` 对 forced 句柄也调用
+// `Router::encodeCapabilities()`（并集），于是 OpenCL lane 报告「支持渐进式 /
+// PNG 策略」，存图调度器据此把任务派给它，`encodeWith` 又把它拒掉——表现是
+// 「这条 lane 接了活，一张也没写出来」，而能力表看上去一切正常。
+void testForcedCapabilitiesMatchBackend() {
+  const Image src = makeImage(64, 48, 3);
+
+  ico_image image{};
+  image.width = static_cast<uint32_t>(src.width);
+  image.height = static_cast<uint32_t>(src.height);
+  image.channels = static_cast<uint32_t>(src.channels);
+  image.stride = static_cast<uint32_t>(src.rowBytes());
+  image.data_size = src.pixels.size();
+  image.data = const_cast<uint8_t *>(src.pixels.data());
+
+  const auto matches = [](const ico_encode_capabilities &c,
+                          const EncodeCapabilities &ref) {
+    return c.jpeg_progressive == (ref.jpeg_progressive ? 1 : 0) &&
+           c.jpeg_optimize_huffman == (ref.jpeg_optimize_huffman ? 1 : 0) &&
+           c.jpeg_restart_interval == (ref.jpeg_restart_interval ? 1 : 0) &&
+           c.jpeg_luma_chroma_quality ==
+               (ref.jpeg_luma_chroma_quality ? 1 : 0) &&
+           c.tiff_predictor == (ref.tiff_predictor ? 1 : 0) &&
+           c.tiff_resolution == (ref.tiff_resolution ? 1 : 0) &&
+           c.tiff_packbits == (ref.tiff_packbits ? 1 : 0) &&
+           c.tiff_jpeg_compression == (ref.tiff_jpeg_compression ? 1 : 0) &&
+           c.png_strategy == (ref.png_strategy ? 1 : 0);
+  };
+
+  Router router;
+  const auto available = router.availableBackends();
+  const std::pair<int, BackendKind> kinds[] = {
+      {ICO_BACKEND_CPU, BackendKind::Cpu},
+      {ICO_BACKEND_OPENCL, BackendKind::OpenCl},
+      {ICO_BACKEND_CUDA, BackendKind::Cuda},
+      {ICO_BACKEND_VULKAN, BackendKind::Vulkan},
+  };
+
+  for (const auto &[api_backend, kind] : kinds) {
+    ico_codec *codec = nullptr;
+    check(image_codec_offload_create_forced(&codec, api_backend) == ICO_OK,
+          "create_forced for every backend value");
+    if (codec == nullptr) continue;
+
+    ico_encode_capabilities caps{};
+    check(image_codec_offload_encode_capabilities(codec, &caps) == ICO_OK,
+          "forced encode_capabilities");
+    check(matches(caps, router.encodeCapabilitiesFor(kind)),
+          "forced capability table equals that backend's own table");
+
+    // 未编进本构建的后端：能力表必须是全 0，而不是拿 CPU 的表顶替。
+    bool built = false;
+    for (BackendKind entry : available) {
+      built = built || entry == kind;
+    }
+    if (!built) {
+      check(matches(caps, EncodeCapabilities{}),
+            "unbuilt forced backend reports no capabilities");
+    }
+
+    // 能力表说「不支持」的参数，C API 编码必须真的拒绝：两张表不能分开走。
+    const EncodeCapabilities own = router.encodeCapabilitiesFor(kind);
+    if (built && !own.jpeg_progressive) {
+      ico_encode_params params{};
+      params.jpeg_progressive = 1;
+      std::vector<uint8_t> out(src.pixels.size() * 4);
+      size_t out_len = out.size();
+      const ico_status status = image_codec_offload_encode(
+          codec, ICO_FORMAT_JPEG, &image, &params, out.data(), &out_len,
+          out.size());
+      check(status == ICO_ERR_UNSUPPORTED_FORMAT,
+            "forced backend rejects advanced params it does not declare");
+    }
+    image_codec_offload_destroy(codec);
+  }
+}
+
 // C API 的同一组参数：既要**真的落进码流**，又要保证「清零结构体」等于
 // 「内部默认值」——老调用方不写新字段时，产物必须与升级前逐字节相同。
 void testCapiAdvancedParams() {
@@ -1288,6 +1368,7 @@ int main() {
   testTiffAdvancedParams();
   testPngAdvancedParams();
   testCapabilityContract();
+  testForcedCapabilitiesMatchBackend();
   testCapiAdvancedParams();
 
   if (g_failures != 0) {
