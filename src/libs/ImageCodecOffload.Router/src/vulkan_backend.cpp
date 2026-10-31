@@ -5,9 +5,9 @@
 // Created   : 2026-10-31
 //
 // 与 CUDA / OpenCL 适配层同样只做三件事：结构体转换、状态码映射、失败原因补
-// 后端名。差别只在能力表：Vulkan 目前没有 JPEG（capabilities.jpeg_* = 0），
-// 所以 JPEG 必须在 supports() 就被挡掉，而不是等编码时失败一次——「先选一个
-// 根本不会这格式的后端再失败」正是路由层要避免的事。
+// 后端名。三种格式都支持，但分工不同（见 docs/README.md 的能力矩阵）：JPEG 的
+// Huffman 与容器在 CPU、DCT/颜色变换在 GPU；TIFF 的 LZW 在 CPU、Predictor 在
+// GPU；PNG 的行滤波在 GPU、DEFLATE 在 CPU。
 #include "vulkan_backend.h"
 
 #ifdef IMAGECODEC_OFFLOAD_WITH_VULKAN
@@ -94,9 +94,10 @@ public:
   BackendKind kind() const override { return BackendKind::Vulkan; }
 
   bool supports(Format format) const override {
-    // JPEG 尚未实现（capabilities.jpeg_* = 0）：在选后端时就排除，
-    // 否则路由层会先选中我们、再由编码器返回 unsupported。
-    return format == Format::Tiff || format == Format::Png;
+    // 三种格式都支持；通道数（JPEG 的 1/3）由后端 C API 自己回答，
+    // 路由层不替它猜——猜错一次就是一次静默降维。
+    return format == Format::Jpeg || format == Format::Tiff ||
+           format == Format::Png;
   }
 
   Result<void> available() const override {
