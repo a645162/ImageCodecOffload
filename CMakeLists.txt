@@ -38,6 +38,10 @@ endif()
 # 额外的工具链。CUDA / Vulkan 由使用方按机器显式打开。
 option(IMAGECODEC_OFFLOAD_WITH_OPENCL "Build the OpenCL backend (ImageCodecOpenCL)" ON)
 option(IMAGECODEC_OFFLOAD_WITH_VULKAN "Build the Vulkan backend (ImageCodecVulkan)" OFF)
+# ImageCodecPlatform：Windows / Linux 通用的平台抽象 + Intel 媒体引擎（oneVPL）
+# 硬件 JPEG + TIFF(JPEG strips) 容器。默认关闭：它依赖 libvpl 头文件子模块，
+# 且只有 Intel 核显机器才用得上；打开它不会改变路由后端表（见 docs/README.md）。
+option(IMAGECODEC_OFFLOAD_WITH_PLATFORM "Build the platform / Intel oneVPL backend (ImageCodecPlatform)" OFF)
 option(IMAGECODEC_OFFLOAD_BUILD_CLI "Build the ico CLI" ON)
 option(IMAGECODEC_OFFLOAD_BUILD_TESTS "Build the test suite" OFF)
 
@@ -61,6 +65,12 @@ endif()
 
 if(IMAGECODEC_OFFLOAD_WITH_CUDA)
   add_subdirectory(libs/ImageCodecCUDA)
+endif()
+
+# 平台抽象 + Intel oneVPL（硬件 JPEG / TIFF JPEG strips）。子项目自己带
+# 自测 CLI（OIC_BUILD_CLI，默认 OFF），作为父项目的一部分构建时不带 CLI。
+if(IMAGECODEC_OFFLOAD_WITH_PLATFORM)
+  add_subdirectory(libs/ImageCodecPlatform)
 endif()
 
 if(IMAGECODEC_OFFLOAD_WITH_VULKAN)

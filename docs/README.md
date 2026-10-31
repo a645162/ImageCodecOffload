@@ -22,7 +22,7 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 |--------|------|-----------|------|
 | `ImageCodecCUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库 | `image_codec_cuda_*`（`<ImageCodecCUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
 | `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU） | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
-| `ImageCodecPlatform` | 平台抽象（exe_dir/单调时钟/休眠）与 Intel oneVPL（`libvpl.dll` 动态加载）JPEG 硬件后端 | `image_codec_*` | `libvpl.dll` + D3D11（Windows） |
+| `ImageCodecPlatform` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | oneVPL 头（`3rdparty/libvpl`）+ 运行期 `libvpl` + Intel 驱动（`libmfx-gen` / `vpl-gpu-rt`）；Linux / Windows 双平台，帧只走系统内存 |
 | `ImageCodecVulkan` | Vulkan compute 与 Win32 external-memory → OpenGL 互操作 | - | Vulkan SDK / vcpkg `vulkan` |
 
 ## 能力矩阵（现状）
@@ -91,6 +91,7 @@ cmake --build build -j
 | --- | --- | --- |
 | `IMAGECODEC_OFFLOAD_WITH_OPENCL` | `ON` | 构建 OpenCL 后端 |
 | `IMAGECODEC_OFFLOAD_WITH_CUDA` | `OFF` | 构建 CUDA 后端（顶层会在 `project()` 前探测 `nvcc`） |
+| `IMAGECODEC_OFFLOAD_WITH_PLATFORM` | `OFF` | 构建 `ImageCodecPlatform`（平台抽象 + Intel oneVPL 硬件 JPEG / TIFF JPEG strips）。**只加库，不动路由后端表与 `ico`** |
 | `IMAGECODEC_OFFLOAD_WITH_VULKAN` | `OFF` | 打开即 `FATAL_ERROR`（见上） |
 | `IMAGECODEC_OFFLOAD_BUILD_CLI` | `ON` | 构建 `ico` |
 | `IMAGECODEC_OFFLOAD_BUILD_TESTS` | `OFF` | 构建并注册 ctest（`ico_test` + 各子项目测试） |
@@ -113,6 +114,12 @@ BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入）�
 
 - `ImageCodecOpenCL` **不引用** `ImageCodecPlatform`（纯 OpenCL，自包含）。
 - `ImageCodecPlatform` 仅承载平台抽象与厂商/Intel 专用后端，供上层按需接入。
+  它目前**没有**接进路由后端表：`ico backends` 里看不到它，打开
+  `IMAGECODEC_OFFLOAD_WITH_PLATFORM` 只多编译出库（`OpenCLImageCodec::Jpeg::oneVPL`、
+  `OpenCLImageCodec::Tiff`）与自测 CLI（子项目的 `OIC_BUILD_CLI`，父项目内默认关闭）。
+- Intel 硬件 JPEG **不是**「TIFF 也有硬件单元」：TIFF 侧只有容器，压缩走
+  「硬件 JPEG strips（Compression=7）」。TIFF 容器由本仓库自写（IFD / JPEGTables），
+  libtiff 只用于测试端解码校验——它写 JPEG 会重新编码 strip，没有入口接收已编好的码流。
 - `ImageCodecVulkan` 可通过 `add_subdirectory(... EXCLUDE_FROM_ALL)` 被上层复用；
   使用 `VulkanImageCodec::Api`，不要复制其 Win32 handle/GL 导入实现。
 - 三个后端的画质指标必须逐项给出**同一个数字**（golden 常量锁在
