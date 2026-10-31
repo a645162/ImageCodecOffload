@@ -93,6 +93,26 @@ void testJpeg2000CpuRoundtrip() {
   }
 }
 
+void testJpegXlCpuRoundtrip() {
+  Router router;
+  const Image source = makeImage(31, 19, 4);
+  auto encoded = router.encodeWith(BackendKind::Cpu, Format::JpegXl, source,
+                                   EncodeParams{});
+  if (!encoded) {
+    check(encoded.error().code == Status::BackendUnavailable,
+          "jpeg-xl is either available or explicitly unavailable");
+    return;
+  }
+  auto decoded = router.decodeWith(BackendKind::Cpu, Format::JpegXl,
+                                   encoded->data(), encoded->size());
+  check(static_cast<bool>(decoded), "jpeg-xl cpu decode");
+  if (decoded) {
+    check(decoded->width == source.width && decoded->height == source.height,
+          "jpeg-xl geometry");
+    check(decoded->channels == source.channels, "jpeg-xl channels");
+  }
+}
+
 // 确定性图案（纯渐变会让压缩缺陷被掩盖；这里要的是有局部随机性）。
 // 与 ImageCodecCUDA / ImageCodecOpenCL 的同名测试逐字相同：三个后端必须在
 // 同一张图上给出同一组数字。
@@ -1729,6 +1749,7 @@ void testTiffStripSharding() {
 int main() {
   testFormatCatalogAndProbe();
   testJpeg2000CpuRoundtrip();
+  testJpegXlCpuRoundtrip();
   testBmpRoundtrip();
   testCpuRoundtrip();
   testCpuChannelMatrix();
