@@ -4,6 +4,8 @@
   "dependencies": [
     "libjpeg-turbo",
     "libpng",
+    "libjxl",
+    "openjpeg",
     "libtiff",
     "zlib"
   ],

@@ -13,6 +13,7 @@
 
 #include "jpeg_io.h"
 #include "openjpeg_io.h"
+#include "jpegxl_io.h"
 #include "metrics.h"
 #include "png_io.h"
 #include "tiff_io.h"
@@ -66,8 +67,7 @@ Result<std::vector<uint8_t>> CpuBackend::encode(Format format,
                                         "cpu: OpenJPEG is not built");
 #endif
     case Format::JpegXl:
-      return fail<std::vector<uint8_t>>(Status::BackendUnavailable,
-                                        "cpu: libjxl is not built");
+      return encodeJpegXl(image);
     case Format::Unknown:
       break;
   }
@@ -92,8 +92,7 @@ Result<Image> CpuBackend::decode(Format format, const uint8_t* data,
                          "cpu: OpenJPEG is not built");
 #endif
     case Format::JpegXl:
-      return fail<Image>(Status::BackendUnavailable,
-                         "cpu: libjxl is not built");
+      return decodeJpegXl(data, size);
     case Format::Unknown:
       break;
   }

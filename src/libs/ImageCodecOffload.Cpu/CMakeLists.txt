@@ -15,6 +15,8 @@ add_library(ImageCodecOffload.Cpu STATIC
   src/jpeg_io.cpp
   src/openjpeg_io.h
   src/openjpeg_io.cpp
+  src/jpegxl_io.h
+  src/jpegxl_io.cpp
   src/container_probe.h
   src/container_probe.cpp
   src/cpu_backend.h
@@ -40,6 +42,11 @@ elseif(TARGET openjp2_static OR TARGET openjp2)
 elseif(TARGET PkgConfig::OPENJPEG_PC)
   target_link_libraries(ImageCodecOffload.Cpu PUBLIC PkgConfig::OPENJPEG_PC)
   target_compile_definitions(ImageCodecOffload.Cpu PRIVATE IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
+endif()
+
+if(TARGET PkgConfig::JXL_PC)
+  target_link_libraries(ImageCodecOffload.Cpu PUBLIC PkgConfig::JXL_PC)
+  target_compile_definitions(ImageCodecOffload.Cpu PRIVATE IMAGECODEC_OFFLOAD_WITH_JXL=1)
 endif()
 
 add_library(ImageCodecOffload::Cpu ALIAS ImageCodecOffload.Cpu)
