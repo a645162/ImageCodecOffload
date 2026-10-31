@@ -28,7 +28,7 @@ namespace {
 
 int g_failures = 0;
 
-void check(bool ok, const char* what) {
+void check(bool ok, const char *what) {
   if (!ok) {
     std::fprintf(stderr, "FAIL: %s\n", what);
     ++g_failures;
@@ -61,10 +61,10 @@ Image makeImage(int w, int h, int c) {
   return img;
 }
 
-Image perturb(const Image& src, unsigned seed) {
+Image perturb(const Image &src, unsigned seed) {
   Image out = src;
   std::mt19937 rng(seed);
-  for (auto& v : out.pixels) {
+  for (auto &v : out.pixels) {
     const int d = static_cast<int>(rng() % 5) - 2;
     const int nv = static_cast<int>(v) + d;
     v = static_cast<uint8_t>(nv < 0 ? 0 : (nv > 255 ? 255 : nv));
@@ -97,13 +97,14 @@ void testBmpRoundtrip() {
 
 void testCpuRoundtrip() {
   Router router;
-  const Image src = makeImage(257, 129, 3);  // 故意不是 16 的倍数
+  const Image src = makeImage(257, 129, 3); // 故意不是 16 的倍数
 
   // TIFF 无压缩：无损，必须逐位一致。
   {
     EncodeParams params;
     params.tiff_compression = 1;
-    auto encoded = router.encodeWith(BackendKind::Cpu, Format::Tiff, src, params);
+    auto encoded =
+        router.encodeWith(BackendKind::Cpu, Format::Tiff, src, params);
     check(static_cast<bool>(encoded), "tiff(none) encode");
     if (encoded) {
       auto decoded = router.decodeWith(BackendKind::Cpu, Format::Tiff,
@@ -117,7 +118,8 @@ void testCpuRoundtrip() {
   {
     EncodeParams params;
     params.tiff_compression = 5;
-    auto encoded = router.encodeWith(BackendKind::Cpu, Format::Tiff, src, params);
+    auto encoded =
+        router.encodeWith(BackendKind::Cpu, Format::Tiff, src, params);
     check(static_cast<bool>(encoded), "tiff(lzw) encode");
     if (encoded) {
       auto decoded = router.decodeWith(BackendKind::Cpu, Format::Tiff,
@@ -132,7 +134,8 @@ void testCpuRoundtrip() {
     EncodeParams params;
     params.tiff_compression = 1;
     params.tiff_tile_size = 64;
-    auto encoded = router.encodeWith(BackendKind::Cpu, Format::Tiff, src, params);
+    auto encoded =
+        router.encodeWith(BackendKind::Cpu, Format::Tiff, src, params);
     check(static_cast<bool>(encoded), "tiff(tiled) encode");
     if (encoded) {
       auto decoded = router.decodeWith(BackendKind::Cpu, Format::Tiff,
@@ -149,7 +152,8 @@ void testCpuRoundtrip() {
   // PNG：无损。
   {
     EncodeParams params;
-    auto encoded = router.encodeWith(BackendKind::Cpu, Format::Png, src, params);
+    auto encoded =
+        router.encodeWith(BackendKind::Cpu, Format::Png, src, params);
     check(static_cast<bool>(encoded), "png encode");
     if (encoded) {
       auto decoded = router.decodeWith(BackendKind::Cpu, Format::Png,
@@ -206,6 +210,73 @@ void testCpuRoundtrip() {
   }
 }
 
+// ---- 2b. OpenCL 后端往返（三个格式 × 灰度/彩色）----
+//
+// 与 CPU 基线同样的判据，但走的是**强制指定**的 OpenCL 入口——自动回退会把
+// 「OpenCL 其实没接这一单」伪装成「成功」，那样测的就只剩 CPU 了。
+// 后端没编进来 / 本机没可用设备时跳过（打印原因），不算失败。
+void testOpenClRoundtrip() {
+  Router router;
+  const Image rgb = makeImage(257, 129, 3); // 故意不是 16 的倍数
+  const Image gray = makeImage(65, 35, 1);
+  EncodeParams params;
+
+  for (int channels : {3, 1}) {
+    const Image &src = (channels == 3) ? rgb : gray;
+
+    // PNG / TIFF 无损：必须逐位一致，且通道数原样保留。
+    for (Format format : {Format::Png, Format::Tiff}) {
+      params.tiff_compression = 5;
+
+      auto encoded =
+          router.encodeWith(BackendKind::OpenCl, format, src, params);
+      if (!encoded) {
+        std::printf("opencl %s encode (%dch) unavailable: %s\n",
+                    image_codec::offload::formatName(format), channels,
+                    encoded.error().message.c_str());
+        continue;
+      }
+
+      auto decoded = router.decodeWith(BackendKind::OpenCl, format,
+                                       encoded->data(), encoded->size());
+      check(static_cast<bool>(decoded), "opencl decode");
+      if (!decoded) continue;
+
+      check(decoded->channels == channels, "opencl keeps channel count");
+      check(decoded->width == src.width && decoded->height == src.height,
+            "opencl keeps geometry");
+      check(decoded->pixels == src.pixels, "opencl lossless roundtrip");
+
+      std::printf("opencl %-4s %dch roundtrip: %zu bytes\n",
+                  image_codec::offload::formatName(format), channels,
+                  encoded->size());
+    }
+
+    // JPEG 有损：几何与通道必须对，质量用 PSNR 兜住下限。
+    params.jpeg_quality = 92;
+    params.jpeg_subsampling = 444; // 合成图案逐像素随机，4:2:0 测的是子采样
+    auto encoded =
+        router.encodeWith(BackendKind::OpenCl, Format::Jpeg, src, params);
+    if (encoded) {
+      auto decoded = router.decodeWith(BackendKind::OpenCl, Format::Jpeg,
+                                       encoded->data(), encoded->size());
+      check(static_cast<bool>(decoded), "opencl jpeg decode");
+      if (decoded) {
+        check(decoded->channels == channels, "opencl jpeg keeps channel count");
+        check(decoded->width == src.width && decoded->height == src.height,
+              "opencl jpeg keeps geometry");
+        const auto psnr = image_codec::offload::metrics::psnr(src, *decoded);
+        check(static_cast<bool>(psnr), "opencl jpeg psnr");
+        if (psnr) {
+          check(*psnr > 30.0, "opencl jpeg quality >= 30 dB at q=92");
+          std::printf("opencl jpeg %dch q=92: %.2f dB, %zu bytes\n", channels,
+                      *psnr, encoded->size());
+        }
+      }
+    }
+  }
+}
+
 // ---- 3. 指标 golden（三个后端的共同基准）----
 
 constexpr double kGoldenMse = 1.989219444444;
@@ -220,7 +291,8 @@ void testGolden() {
 
   const auto mse = image_codec::offload::metrics::mse(a, b);
   check(static_cast<bool>(mse), "golden mse");
-  if (mse) check(std::fabs(*mse - kGoldenMse) < 1e-9, "golden mse matches CUDA");
+  if (mse)
+    check(std::fabs(*mse - kGoldenMse) < 1e-9, "golden mse matches CUDA");
 
   const auto psnr = image_codec::offload::metrics::psnr(a, b);
   check(static_cast<bool>(psnr), "golden psnr");
@@ -294,7 +366,7 @@ void testBackendAgreement() {
       std::printf("%s: unavailable (%s)\n",
                   image_codec::offload::backendName(kind),
                   mse.error().message.c_str());
-      continue;  // 未编译进来 / 无设备：不是失败
+      continue; // 未编译进来 / 无设备：不是失败
     }
 
     const auto psnr = router.psnrWith(kind, a, b);
@@ -307,16 +379,16 @@ void testBackendAgreement() {
       check(std::fabs(*psnr - *ref_psnr) < 1e-9, "psnr matches CPU");
     }
     if (ref_ssim && ssim) {
-      check(std::fabs(ssim->ssim - ref_ssim->ssim) < 1e-9,
-            "ssim matches CPU");
+      check(std::fabs(ssim->ssim - ref_ssim->ssim) < 1e-9, "ssim matches CPU");
       check(std::fabs(ssim->ms_ssim - ref_ssim->ms_ssim) < 1e-9,
             "ms-ssim matches CPU");
       check(ssim->levels == ref_ssim->levels, "levels match CPU");
     }
 
     std::printf("%s: mse=%.9f psnr=%.6f ssim=%.9f ms-ssim=%.9f\n",
-                image_codec::offload::backendName(kind), *mse, psnr ? *psnr : 0.0,
-                ssim ? ssim->ssim : 0.0, ssim ? ssim->ms_ssim : 0.0);
+                image_codec::offload::backendName(kind), *mse,
+                psnr ? *psnr : 0.0, ssim ? ssim->ssim : 0.0,
+                ssim ? ssim->ms_ssim : 0.0);
   }
 }
 
@@ -353,14 +425,15 @@ void testGrayChannelFidelity() {
                 decoded->channels);
   }
 
-  // 强制指定 OpenCL：它的 C ABI 只有 24-bit RGB，所以必须**失败**，
-  // 而不是返回一张把灰度复制了三遍的图。
+  // 强制指定 OpenCL：C ABI 现在支持 1 通道，因此应当**成功且仍是 1 通道**。
+  // 若本构建没有 OpenCL（或本机无设备），退回「明确失败」也算通过——两种
+  // 结果都不允许出现「悄悄升维成 3 通道的成功」。
   EncodeParams params;
+  params.jpeg_quality = 95;
   auto jpeg = router.encodeWith(BackendKind::Cpu, Format::Jpeg, gray, params);
   if (jpeg) {
-    const auto forced =
-        router.decodeWith(BackendKind::OpenCl, Format::Jpeg, jpeg->data(),
-                          jpeg->size());
+    const auto forced = router.decodeWith(BackendKind::OpenCl, Format::Jpeg,
+                                          jpeg->data(), jpeg->size());
     if (forced) {
       check(forced->channels == 1,
             "forced opencl decode of gray must keep 1 channel");
@@ -372,43 +445,51 @@ void testGrayChannelFidelity() {
 }
 
 // ---- 6. 回退必须留下原因 ----
-
+//
+// 找一个**真正**只有 CPU 会做的组合：OpenCL 后端只实现 TIFF 的 none/LZW，
+// deflate（compression=8）没有对应路径。自动模式必须回退到 CPU 并记下原因；
+// 强制模式必须失败，绝不换个实现冒充。
 void testFallbackLeavesReason() {
   Router router;
-  // 只留 OpenCL + CPU：灰度图在 OpenCL 上不受支持，必须回退到 CPU。
   router.setOrder({BackendKind::OpenCl});
 
-  const Image gray = makeImage(64, 48, 1);
+  const Image src = makeImage(64, 48, 3);
 
   EncodeParams params;
+  params.tiff_compression = 8; // deflate：OpenCL 没有这条路径
   image_codec::offload::Outcome outcome;
-  const auto encoded = router.encode(Format::Png, gray, params, &outcome);
-  check(static_cast<bool>(encoded), "gray png via auto fallback");
-  check(outcome.used == BackendKind::Cpu, "fell back to cpu");
+  const auto encoded = router.encode(Format::Tiff, src, params, &outcome);
+  check(static_cast<bool>(encoded), "tiff deflate via auto fallback");
+  if (!encoded) return;
 
+  check(outcome.used == BackendKind::Cpu, "tiff deflate fell back to cpu");
+  check(!outcome.notes.empty(), "fallback recorded a reason");
   if (!outcome.notes.empty()) {
     std::printf("fallback note: %s\n", outcome.notes.front().c_str());
   }
 
-  // 要么 OpenCL 没编译进来（note 说明 not built），要么它明确拒绝灰度图。
-  check(!outcome.notes.empty(), "fallback recorded a reason");
+  // 回退产物本身必须是对的：无损格式解回来要逐位一致。
+  const auto decoded = router.decodeWith(BackendKind::Cpu, Format::Tiff,
+                                         encoded->data(), encoded->size());
+  check(static_cast<bool>(decoded), "fallback tiff decode");
+  if (decoded) check(decoded->pixels == src.pixels, "fallback tiff lossless");
 
-  // 强制指定不支持的后端时必须失败，而不是悄悄换成别的后端。
+  // 强制指定同一个后端时必须失败（OpenCL 未编进本构建时同样是失败）。
   const auto forced =
-      router.encodeWith(BackendKind::OpenCl, Format::Png, gray, params);
-  const bool rejected = !forced;
-  if (rejected) {
-    std::printf("forced opencl on gray: %s\n", forced.error().message.c_str());
+      router.encodeWith(BackendKind::OpenCl, Format::Tiff, src, params);
+  check(!forced, "forced backend never silently swaps implementations");
+  if (!forced) {
+    std::printf("forced opencl on tiff deflate: %s\n",
+                forced.error().message.c_str());
   }
-  // OpenCL 未编译进来的构建里同样是「失败」，两种情形都算通过。
-  check(rejected, "forced backend never silently swaps implementations");
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   testBmpRoundtrip();
   testCpuRoundtrip();
+  testOpenClRoundtrip();
   testGolden();
   testAnalytic();
   testBackendAgreement();

@@ -21,7 +21,7 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 | 子项目 | 用途 | C API 前缀 | 依赖 |
 |--------|------|-----------|------|
 | `ImageCodecCUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库 | `image_codec_cuda_*`（`<ImageCodecCUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
-| `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU） | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
+| `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU） | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
 | `ImageCodecPlatform` | 平台抽象（exe_dir/单调时钟/休眠）与 Intel oneVPL（`libvpl.dll` 动态加载）JPEG 硬件后端 | `image_codec_*` | `libvpl.dll` + D3D11（Windows） |
 | `ImageCodecVulkan` | Vulkan compute 与 Win32 external-memory → OpenGL 互操作 | - | Vulkan SDK / vcpkg `vulkan` |
 
@@ -29,9 +29,9 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 
 | 格式 | CUDA | OpenCL | CPU |
 | --- | --- | --- | --- |
-| JPEG | 编码/解码（nvJPEG，1 或 3 通道） | 编码/解码（**仅 3 通道**） | 编码/解码（1 或 3 通道） |
-| TIFF | 编码/解码（LZW/none，strip 与 tiled，1/3/4 通道） | 编码/解码（**仅 3 通道**） | 编码/解码 |
-| PNG | 编码/解码（1/3/4 通道） | **不支持** | 编码/解码 |
+| JPEG | 编码/解码（nvJPEG，1 或 3 通道） | 编码/解码（1 或 3 通道，子采样可指定） | 编码/解码（1 或 3 通道） |
+| TIFF | 编码/解码（LZW/none，strip 与 tiled，1/3/4 通道） | 编码/解码（none/LZW，1 或 3 通道） | 编码/解码 |
+| PNG | 编码/解码（1/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1 或 3 通道） | 编码/解码 |
 | MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（参考实现） |
 
 Vulkan 目前**没有任何 TIFF/PNG/JPEG 编解码与指标实现**，因此
@@ -67,10 +67,12 @@ backend: cpu  (fell back)
 
 - CPU 基线全程保留 1 通道；
 - CUDA 灰度 JPEG 走 `CSS_GRAY`（真 1 分量文件），灰度 TIFF/PNG 也保持 1 通道；
-- OpenCL 的 C ABI 只有 24-bit RGB 一种形态，于是**调用之前**先用
-  `ImageCodecOffload.Cpu` 的容器头探测（`probeChannels`）问出「这张图本来几通道」，
-  表示不了就明确返回 `unsupported-format`，交给 CPU。允许「做不到」，不允许
-  「做到了但改变了语义」。
+- OpenCL 的 BMP 中转层（`OpenCL.Image.Codec.Common`）本身区分 8-bit 灰度与
+  24-bit RGB：灰度 TIFF 写 `spp=1` + `Photometric=BlackIsZero`，灰度 JPEG 走
+  `gray_to_y` 并强制 4:4:4（没有色度可下采样），灰度 PNG 按 1 通道行滤波；
+- 路由层仍然先用 `ImageCodecOffload.Cpu` 的容器头探测（`probeChannels`）问出
+  「这张图本来几通道」，与后端能表示的通道数不匹配就明确返回
+  `unsupported-format`，交给下一个后端。允许「做不到」，不允许「做到了但改变了语义」。
 
 ## 构建
 

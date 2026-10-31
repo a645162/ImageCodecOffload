@@ -18,7 +18,7 @@ namespace image_codec {
 namespace offload {
 
 class ICodecBackend {
- public:
+public:
   virtual ~ICodecBackend() = default;
 
   virtual BackendKind kind() const = 0;
@@ -29,22 +29,23 @@ class ICodecBackend {
   virtual Result<void> available() const = 0;
 
   // 该后端是否支持某个容器格式。能力是**逐格式**的，不是逐后端：
-  // 例如 OpenCL 后端只有 JPEG/TIFF（没有 PNG），路由层必须先问再选，
-  // 否则「回退」会变成「选了一个根本不会这格式的后端再失败」。
+  // 后端之间的覆盖范围并不天然相同（例如 Vulkan 尚未实现某个格式，或某个
+  // 后端只有解码没有编码），路由层必须先问再选，否则「回退」会变成
+  // 「选了一个根本不会这格式的后端再失败」。
   virtual bool supports(Format format) const = 0;
 
-  virtual Result<std::vector<uint8_t>> encode(Format format, const Image& image,
-                                             const EncodeParams& params) = 0;
+  virtual Result<std::vector<uint8_t>> encode(Format format, const Image &image,
+                                              const EncodeParams &params) = 0;
 
-  virtual Result<Image> decode(Format format, const uint8_t* data,
+  virtual Result<Image> decode(Format format, const uint8_t *data,
                                size_t size) = 0;
 
   // ---- 画质指标 ----
   // 三个入口独立，理由见 Core/metrics.h。定义必须与其它后端逐位一致。
-  virtual Result<double> mse(const Image& a, const Image& b) = 0;
-  virtual Result<double> psnr(const Image& a, const Image& b) = 0;
-  virtual Result<SsimResult> ssim(const Image& a, const Image& b) = 0;
+  virtual Result<double> mse(const Image &a, const Image &b) = 0;
+  virtual Result<double> psnr(const Image &a, const Image &b) = 0;
+  virtual Result<SsimResult> ssim(const Image &a, const Image &b) = 0;
 };
 
-}  // namespace offload
-}  // namespace image_codec
+} // namespace offload
+} // namespace image_codec
