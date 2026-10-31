@@ -6,6 +6,7 @@
     "libpng",
     "libjxl",
     "openjpeg",
+    "opencl",
     "tiff",
     "zlib"
   ],
