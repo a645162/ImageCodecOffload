@@ -428,6 +428,61 @@ void testBackendRoundtrip() {
   }
 }
 
+// 4:2:2 子采样：色度平面与亮度等高，只做水平抽取。
+//
+// 这条路径容易被「4:2:0 已经对」掩盖过去：两个子采样共用一个下采样实现时，
+// 把抽取比例写死成 2x2 也照样能编出能打开的文件——亮度正常、只有颜色系统性
+// 跑偏。随机图案测不出来（色度本来就是噪声），所以这里用**平滑渐变图**：
+// 写死 2x2 时下半幅色度被摊平，PSNR 会从 33 dB 掉到 15~19 dB。
+// 同时要求 4:2:2 不低于 4:2:0 —— 平滑图上少丢垂直色度只会更好，反过来就是
+// 「行取错了」。
+void testJpegSubsampling() {
+  Router router;
+
+  Image grad;
+  grad.width = 65; // 奇数宽度：色度平面最后一列走边缘复制分支
+  grad.height = 39;
+  grad.channels = 3;
+  grad.pixels.resize(static_cast<size_t>(grad.width) * grad.height * 3);
+  for (int y = 0; y < grad.height; ++y) {
+    for (int x = 0; x < grad.width; ++x) {
+      uint8_t *p =
+          &grad.pixels[(static_cast<size_t>(y) * grad.width + x) * 3];
+      p[0] = static_cast<uint8_t>((x * 4) & 0xFF);
+      p[1] = static_cast<uint8_t>((y * 6) & 0xFF);
+      p[2] = static_cast<uint8_t>(((x + y) * 2) & 0xFF);
+    }
+  }
+
+  const auto quality_at = [&](BackendKind kind, int subsampling) -> double {
+    EncodeParams params;
+    params.jpeg_quality = 90;
+    params.jpeg_subsampling = subsampling;
+    const auto encoded = router.encodeWith(kind, Format::Jpeg, grad, params);
+    if (!encoded) return -1.0;
+    const auto decoded = router.decodeWith(BackendKind::Cpu, Format::Jpeg,
+                                           encoded->data(), encoded->size());
+    if (!decoded) return -1.0;
+    const auto psnr = image_codec::offload::metrics::psnr(grad, *decoded);
+    return psnr ? *psnr : -1.0;
+  };
+
+  for (BackendKind kind : router.order()) {
+    if (kind == BackendKind::Cpu) continue;
+    const double p420 = quality_at(kind, 420);
+    const double p422 = quality_at(kind, 422);
+    if (p422 < 0.0 || p420 < 0.0) {
+      std::printf("%s jpeg 422: skipped (encode/decode unavailable)\n",
+                  image_codec::offload::backendName(kind));
+      continue;
+    }
+    check(p422 >= 30.0, "jpeg 422 quality >= 30 dB");
+    check(p422 >= p420 - 1.0, "jpeg 422 not worse than 420");
+    std::printf("%s jpeg 422: %.2f dB (4:2:0 %.2f dB)\n",
+                image_codec::offload::backendName(kind), p422, p420);
+  }
+}
+
 // ---- 3. 指标 golden（三个后端的共同基准）----
 
 constexpr double kGoldenMse = 1.989219444444;
@@ -711,6 +766,7 @@ int main() {
   testJpegAlphaRejected();
   testFourChannelCrossBackend();
   testBackendRoundtrip();
+  testJpegSubsampling();
   testGolden();
   testAnalytic();
   testBackendAgreement();
