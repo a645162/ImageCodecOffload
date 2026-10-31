@@ -73,9 +73,12 @@ Image perturb(const Image &src, unsigned seed) {
 }
 
 // ---- 1. BMP 中转 ----
-
+//
+// BMP 在本项目里只是调试/CLI 的中转格式，但它一旦丢掉 Alpha，后面所有比对
+// 就都在比错的数据。因此 1/3/4 通道都要逐位往返；2 通道（灰度+Alpha）在 BMP
+// 里没有表示法，必须**明确拒绝**而不是伪造一个 32-bit 文件。
 void testBmpRoundtrip() {
-  for (int channels : {1, 3}) {
+  for (int channels : {1, 3, 4}) {
     const Image src = makeImage(37, 23, channels);
 
     auto encoded = image_codec::offload::common::writeBmp(src);
@@ -91,6 +94,10 @@ void testBmpRoundtrip() {
     check(decoded->channels == src.channels, "bmp channel fidelity");
     check(decoded->pixels == src.pixels, "bmp pixels identical");
   }
+
+  const Image ga = makeImage(8, 8, 2);
+  check(!image_codec::offload::common::writeBmp(ga),
+        "bmp rejects 2-channel (gray+alpha) instead of faking a 32-bit file");
 }
 
 // ---- 2. CPU 基线往返 ----
@@ -210,68 +217,205 @@ void testCpuRoundtrip() {
   }
 }
 
-// ---- 2b. OpenCL 后端往返（三个格式 × 灰度/彩色）----
+// ---- 2a. 通道矩阵：PNG / TIFF 的 1/2/3/4 通道在 CPU 基线上逐位无损 ----
 //
-// 与 CPU 基线同样的判据，但走的是**强制指定**的 OpenCL 入口——自动回退会把
-// 「OpenCL 其实没接这一单」伪装成「成功」，那样测的就只剩 CPU 了。
-// 后端没编进来 / 本机没可用设备时跳过（打印原因），不算失败。
-void testOpenClRoundtrip() {
+// 这四条通道数正好对应 PNG 的四种颜色类型（灰度 / 灰度+A / RGB / RGBA）。
+// 少测一条，就等于默认「那张图会被悄悄降维」——而带 Alpha 的 PNG 在现实里
+// 比不带的多得多。TIFF 另外要求 spp 与 ExtraSamples 同时写对，否则 4 通道
+// 会被别的解码器读成 CMYK。
+void testCpuChannelMatrix() {
   Router router;
-  const Image rgb = makeImage(257, 129, 3); // 故意不是 16 的倍数
-  const Image gray = makeImage(65, 35, 1);
-  EncodeParams params;
+  const EncodeParams params;
 
-  for (int channels : {3, 1}) {
-    const Image &src = (channels == 3) ? rgb : gray;
+  for (int channels = 1; channels <= 4; ++channels) {
+    const Image src = makeImage(97, 61, channels); // 故意是奇数尺寸
 
-    // PNG / TIFF 无损：必须逐位一致，且通道数原样保留。
     for (Format format : {Format::Png, Format::Tiff}) {
-      params.tiff_compression = 5;
+      auto encoded = router.encodeWith(BackendKind::Cpu, format, src, params);
+      check(static_cast<bool>(encoded), "channel matrix encode");
+      if (!encoded) continue;
 
-      auto encoded =
-          router.encodeWith(BackendKind::OpenCl, format, src, params);
-      if (!encoded) {
-        std::printf("opencl %s encode (%dch) unavailable: %s\n",
-                    image_codec::offload::formatName(format), channels,
-                    encoded.error().message.c_str());
-        continue;
-      }
-
-      auto decoded = router.decodeWith(BackendKind::OpenCl, format,
+      auto decoded = router.decodeWith(BackendKind::Cpu, format,
                                        encoded->data(), encoded->size());
-      check(static_cast<bool>(decoded), "opencl decode");
+      check(static_cast<bool>(decoded), "channel matrix decode");
       if (!decoded) continue;
 
-      check(decoded->channels == channels, "opencl keeps channel count");
+      check(decoded->channels == channels,
+            "channel matrix keeps the sample count");
       check(decoded->width == src.width && decoded->height == src.height,
-            "opencl keeps geometry");
-      check(decoded->pixels == src.pixels, "opencl lossless roundtrip");
+            "channel matrix keeps geometry");
+      if (decoded->pixels != src.pixels) {
+        // 只打印第一个不同的位置：通道排布写错时，光看「不相等」帮不上忙。
+        size_t first = 0;
+        while (first < src.pixels.size() &&
+               decoded->pixels[first] == src.pixels[first]) {
+          ++first;
+        }
+        std::printf("MISMATCH %s %dch at %zu: %u vs %u\n",
+                    image_codec::offload::formatName(format), channels, first,
+                    static_cast<unsigned>(src.pixels[first]),
+                    static_cast<unsigned>(decoded->pixels[first]));
+      }
+      check(decoded->pixels == src.pixels, "channel matrix lossless");
 
-      std::printf("opencl %-4s %dch roundtrip: %zu bytes\n",
+      std::printf("cpu %-4s %dch roundtrip: %zu bytes\n",
                   image_codec::offload::formatName(format), channels,
                   encoded->size());
     }
+  }
+}
 
-    // JPEG 有损：几何与通道必须对，质量用 PSNR 兜住下限。
-    params.jpeg_quality = 92;
-    params.jpeg_subsampling = 444; // 合成图案逐像素随机，4:2:0 测的是子采样
-    auto encoded =
-        router.encodeWith(BackendKind::OpenCl, Format::Jpeg, src, params);
-    if (encoded) {
-      auto decoded = router.decodeWith(BackendKind::OpenCl, Format::Jpeg,
-                                       encoded->data(), encoded->size());
-      check(static_cast<bool>(decoded), "opencl jpeg decode");
-      if (decoded) {
-        check(decoded->channels == channels, "opencl jpeg keeps channel count");
-        check(decoded->width == src.width && decoded->height == src.height,
-              "opencl jpeg keeps geometry");
-        const auto psnr = image_codec::offload::metrics::psnr(src, *decoded);
-        check(static_cast<bool>(psnr), "opencl jpeg psnr");
-        if (psnr) {
-          check(*psnr > 30.0, "opencl jpeg quality >= 30 dB at q=92");
-          std::printf("opencl jpeg %dch q=92: %.2f dB, %zu bytes\n", channels,
-                      *psnr, encoded->size());
+// ---- 2b. JPEG 没有 Alpha：2/4 通道必须被明确拒绝 ----
+//
+// 静默丢 Alpha 也能「编码成功」，只是成功得很危险：文件能打开、PSNR 也正常，
+// 只有透明度凭空消失。因此这里要求两条路径都失败，且错误码是 InvalidArgument
+// （参数本身就不成立，换后端也无济于事）。
+void testJpegAlphaRejected() {
+  Router router;
+  EncodeParams params;
+  params.jpeg_quality = 90;
+
+  for (int channels : {2, 4}) {
+    const Image src = makeImage(32, 16, channels);
+
+    for (BackendKind kind : {BackendKind::Cpu, BackendKind::OpenCl}) {
+      const auto encoded = router.encodeWith(kind, Format::Jpeg, src, params);
+      check(!encoded, "jpeg must reject images with an alpha sample");
+      if (!encoded) {
+        check(encoded.error().code ==
+                  image_codec::offload::Status::InvalidArgument,
+              "jpeg alpha rejection is InvalidArgument");
+        std::printf("jpeg %dch on %-6s: rejected (%s)\n", channels,
+                    image_codec::offload::backendName(kind),
+                    encoded.error().message.c_str());
+      }
+    }
+
+    // 自动路由同样不能靠「换一个后端」把 Alpha 弄丢。
+    const auto encoded = router.encode(Format::Jpeg, src, params);
+    check(!encoded, "jpeg auto route must not silently drop alpha");
+  }
+}
+
+// ---- 2c. 跨后端互通：一个后端编出来的 4 通道文件，另一个后端要能读 ----
+//
+// 通道模型一旦在某一边写错（比如把 RGBA 当 RGB 铺开），单后端自测仍然会过，
+// 只有交叉读取才会暴露。
+void testFourChannelCrossBackend() {
+  Router router;
+  const Image src = makeImage(83, 47, 4);
+  const EncodeParams params;
+
+  for (BackendKind kind : router.order()) {
+    if (kind == BackendKind::Cpu) continue;
+
+    for (Format format : {Format::Png, Format::Tiff}) {
+      const auto from_cpu =
+          router.encodeWith(BackendKind::Cpu, format, src, params);
+      check(static_cast<bool>(from_cpu), "4ch cpu encode");
+      if (!from_cpu) continue;
+
+      const auto on_gpu =
+          router.decodeWith(kind, format, from_cpu->data(), from_cpu->size());
+      if (!on_gpu) {
+        std::printf("%s decode of cpu 4ch %s: %s\n",
+                    image_codec::offload::backendName(kind),
+                    image_codec::offload::formatName(format),
+                    on_gpu.error().message.c_str());
+      } else {
+        check(on_gpu->channels == 4, "gpu reads 4ch from cpu");
+        check(on_gpu->pixels == src.pixels, "gpu reads cpu 4ch losslessly");
+      }
+
+      const auto from_gpu = router.encodeWith(kind, format, src, params);
+      if (!from_gpu) {
+        std::printf("%s 4ch %s encode: %s\n",
+                    image_codec::offload::backendName(kind),
+                    image_codec::offload::formatName(format),
+                    from_gpu.error().message.c_str());
+        continue;
+      }
+
+      const auto on_cpu = router.decodeWith(BackendKind::Cpu, format,
+                                            from_gpu->data(), from_gpu->size());
+      check(static_cast<bool>(on_cpu), "cpu decode of gpu 4ch");
+      if (on_cpu) {
+        check(on_cpu->channels == 4, "cpu reads 4ch from gpu");
+        check(on_cpu->pixels == src.pixels, "cpu reads gpu 4ch losslessly");
+      }
+    }
+  }
+}
+
+// ---- 2d. GPU 后端往返（三个格式 × 1..4 通道）----
+//
+// 对每个已编译进来的非 CPU 后端都跑一遍，而不是只测 OpenCL：CUDA 曾经把
+// 通道数写死 3、TIFF 容器拒收 2 通道，单后端自测发现不了「另一条路上悄悄降维」。
+// 用**强制指定**的入口，自动回退会把「这个后端其实没接这一单」伪装成成功。
+// 后端没编进来 / 本机没可用设备时跳过（打印原因），不算失败。
+void testBackendRoundtrip() {
+  Router router;
+  EncodeParams params;
+
+  for (BackendKind kind : router.order()) {
+    if (kind == BackendKind::Cpu) continue;
+
+    for (int channels = 1; channels <= 4; ++channels) {
+      const Image src = makeImage(97, 61, channels); // 故意不是 16 的倍数
+
+      // PNG / TIFF 无损：必须逐位一致，且通道数原样保留。
+      for (Format format : {Format::Png, Format::Tiff}) {
+        params.tiff_compression = 5;
+
+        auto encoded = router.encodeWith(kind, format, src, params);
+        if (!encoded) {
+          std::printf("%s %s encode (%dch) unavailable: %s\n",
+                      image_codec::offload::backendName(kind),
+                      image_codec::offload::formatName(format), channels,
+                      encoded.error().message.c_str());
+          continue;
         }
+
+        auto decoded =
+            router.decodeWith(kind, format, encoded->data(), encoded->size());
+        check(static_cast<bool>(decoded), "gpu decode");
+        if (!decoded) continue;
+
+        check(decoded->channels == channels, "gpu keeps channel count");
+        check(decoded->width == src.width && decoded->height == src.height,
+              "gpu keeps geometry");
+        check(decoded->pixels == src.pixels, "gpu lossless roundtrip");
+
+        std::printf("%s %-4s %dch roundtrip: %zu bytes\n",
+                    image_codec::offload::backendName(kind),
+                    image_codec::offload::formatName(format), channels,
+                    encoded->size());
+      }
+
+      // JPEG 只有 1/3 通道；2/4 由 testJpegAlphaRejected 负责检查拒绝路径。
+      if (channels != 1 && channels != 3) continue;
+
+      // JPEG 有损：几何与通道必须对，质量用 PSNR 兜住下限。
+      params.jpeg_quality = 92;
+      params.jpeg_subsampling = 444; // 合成图案逐像素随机，4:2:0 测的是子采样
+      auto encoded = router.encodeWith(kind, Format::Jpeg, src, params);
+      if (!encoded) continue;
+
+      auto decoded = router.decodeWith(kind, Format::Jpeg, encoded->data(),
+                                       encoded->size());
+      check(static_cast<bool>(decoded), "gpu jpeg decode");
+      if (!decoded) continue;
+
+      check(decoded->channels == channels, "gpu jpeg keeps channel count");
+      check(decoded->width == src.width && decoded->height == src.height,
+            "gpu jpeg keeps geometry");
+      const auto psnr = image_codec::offload::metrics::psnr(src, *decoded);
+      check(static_cast<bool>(psnr), "gpu jpeg psnr");
+      if (psnr) {
+        check(*psnr > 30.0, "gpu jpeg quality >= 30 dB at q=92");
+        std::printf("%s jpeg %dch q=92: %.2f dB, %zu bytes\n",
+                    image_codec::offload::backendName(kind), channels, *psnr,
+                    encoded->size());
       }
     }
   }
@@ -348,47 +492,52 @@ void testAnalytic() {
 
 void testBackendAgreement() {
   Router router;
-  const Image a = makeImage(320, 240, 3);
-  const Image b = perturb(a, 11);
+  // 3 通道是常规路径，4 通道是「Alpha 有没有被指标偷偷算错」的那条：
+  // 通道数写死 3 的实现会把 RGBA 的第 4 个样本整列忽略，数字看起来仍然合理。
+  for (int channels : {3, 4}) {
+    const Image a = makeImage(320, 240, channels);
+    const Image b = perturb(a, 11);
 
-  const auto ref_mse = router.mseWith(BackendKind::Cpu, a, b);
-  const auto ref_psnr = router.psnrWith(BackendKind::Cpu, a, b);
-  const auto ref_ssim = router.ssimWith(BackendKind::Cpu, a, b);
-  check(static_cast<bool>(ref_mse) && static_cast<bool>(ref_psnr) &&
-            static_cast<bool>(ref_ssim),
-        "cpu reference metrics");
+    const auto ref_mse = router.mseWith(BackendKind::Cpu, a, b);
+    const auto ref_psnr = router.psnrWith(BackendKind::Cpu, a, b);
+    const auto ref_ssim = router.ssimWith(BackendKind::Cpu, a, b);
+    check(static_cast<bool>(ref_mse) && static_cast<bool>(ref_psnr) &&
+              static_cast<bool>(ref_ssim),
+          "cpu reference metrics");
 
-  for (BackendKind kind : router.order()) {
-    if (kind == BackendKind::Cpu) continue;
+    for (BackendKind kind : router.order()) {
+      if (kind == BackendKind::Cpu) continue;
 
-    const auto mse = router.mseWith(kind, a, b);
-    if (!mse) {
-      std::printf("%s: unavailable (%s)\n",
-                  image_codec::offload::backendName(kind),
-                  mse.error().message.c_str());
-      continue; // 未编译进来 / 无设备：不是失败
+      const auto mse = router.mseWith(kind, a, b);
+      if (!mse) {
+        std::printf("%s: unavailable (%s)\n",
+                    image_codec::offload::backendName(kind),
+                    mse.error().message.c_str());
+        continue; // 未编译进来 / 无设备：不是失败
+      }
+
+      const auto psnr = router.psnrWith(kind, a, b);
+      const auto ssim = router.ssimWith(kind, a, b);
+      check(static_cast<bool>(psnr) && static_cast<bool>(ssim),
+            "backend metrics complete");
+
+      if (ref_mse) check(std::fabs(*mse - *ref_mse) < 1e-9, "mse matches CPU");
+      if (ref_psnr && psnr) {
+        check(std::fabs(*psnr - *ref_psnr) < 1e-9, "psnr matches CPU");
+      }
+      if (ref_ssim && ssim) {
+        check(std::fabs(ssim->ssim - ref_ssim->ssim) < 1e-9,
+              "ssim matches CPU");
+        check(std::fabs(ssim->ms_ssim - ref_ssim->ms_ssim) < 1e-9,
+              "ms-ssim matches CPU");
+        check(ssim->levels == ref_ssim->levels, "levels match CPU");
+      }
+
+      std::printf("%s (%dch): mse=%.9f psnr=%.6f ssim=%.9f ms-ssim=%.9f\n",
+                  image_codec::offload::backendName(kind), channels, *mse,
+                  psnr ? *psnr : 0.0, ssim ? ssim->ssim : 0.0,
+                  ssim ? ssim->ms_ssim : 0.0);
     }
-
-    const auto psnr = router.psnrWith(kind, a, b);
-    const auto ssim = router.ssimWith(kind, a, b);
-    check(static_cast<bool>(psnr) && static_cast<bool>(ssim),
-          "backend metrics complete");
-
-    if (ref_mse) check(std::fabs(*mse - *ref_mse) < 1e-9, "mse matches CPU");
-    if (ref_psnr && psnr) {
-      check(std::fabs(*psnr - *ref_psnr) < 1e-9, "psnr matches CPU");
-    }
-    if (ref_ssim && ssim) {
-      check(std::fabs(ssim->ssim - ref_ssim->ssim) < 1e-9, "ssim matches CPU");
-      check(std::fabs(ssim->ms_ssim - ref_ssim->ms_ssim) < 1e-9,
-            "ms-ssim matches CPU");
-      check(ssim->levels == ref_ssim->levels, "levels match CPU");
-    }
-
-    std::printf("%s: mse=%.9f psnr=%.6f ssim=%.9f ms-ssim=%.9f\n",
-                image_codec::offload::backendName(kind), *mse,
-                psnr ? *psnr : 0.0, ssim ? ssim->ssim : 0.0,
-                ssim ? ssim->ms_ssim : 0.0);
   }
 }
 
@@ -489,7 +638,10 @@ void testFallbackLeavesReason() {
 int main() {
   testBmpRoundtrip();
   testCpuRoundtrip();
-  testOpenClRoundtrip();
+  testCpuChannelMatrix();
+  testJpegAlphaRejected();
+  testFourChannelCrossBackend();
+  testBackendRoundtrip();
   testGolden();
   testAnalytic();
   testBackendAgreement();

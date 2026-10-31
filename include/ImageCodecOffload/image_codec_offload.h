@@ -37,9 +37,9 @@ extern "C" {
 // 数值与三个后端子项目（ImageCodecOpenCL / ImageCodecCUDA / ImageCodecVulkan）
 // 一致，上层可以把任何后端的失败码直接映射过来。
 typedef enum ico_status {
-  ICO_OK = 0,                   // 成功
-  ICO_ERR_INVALID_ARGUMENT = 1, // 参数非法（空指针/越界/不支持的组合）
-  ICO_ERR_OUT_OF_MEMORY = 2,    // 内存/显存不足（含输出缓冲过小）
+  ICO_OK = 0,                      // 成功
+  ICO_ERR_INVALID_ARGUMENT = 1,    // 参数非法（空指针/越界/不支持的组合）
+  ICO_ERR_OUT_OF_MEMORY = 2,       // 内存/显存不足（含输出缓冲过小）
   ICO_ERR_BACKEND_UNAVAILABLE = 3, // 指定后端不可用（未编译进来/无设备）
   ICO_ERR_UNSUPPORTED_FORMAT = 4,  // 不支持的格式/方向/通道数
   ICO_ERR_DECODE_FAILED = 5,       // 解码失败（码流损坏等）
@@ -66,8 +66,10 @@ typedef enum ico_backend {
 } ico_backend;
 
 // 解码产物 / 编码输入。
-//   channels == 1：灰度；3：RGB。data 为 top-down 行序（第 0 行为图像顶部）。
-//   stride == 0 时按 width * channels 处理。
+//   channels：1 = 灰度、2 = 灰度+Alpha、3 = RGB、4 = RGBA（Alpha 非预乘）。
+//   与 PNG 的四种颜色类型一一对应；PNG / TIFF 全支持，JPEG 没有 Alpha 样本，
+//   2/4 通道会返回 ICO_STATUS_INVALID_ARGUMENT（不静默降维）。
+//   data 为 top-down 行序（第 0 行为图像顶部）；stride == 0 时按 width * channels 处理。
 // 解码输出由本库分配，调用方用 image_codec_offload_image_free 释放。
 typedef struct ico_image {
   uint32_t width;
@@ -85,9 +87,9 @@ typedef struct ico_encode_params {
   int jpeg_subsampling; // 0 = 默认(420)，444/422/420
 
   // TIFF
-  int tiff_compression;     // 0 = 默认 LZW，1 = none，5 = LZW，8 = deflate
-  int tiff_rows_per_strip;  // 0 = 自动
-  int tiff_tile_size;       // 0 = strip 布局；>0 = tiled（16 的倍数）
+  int tiff_compression;    // 0 = 默认 LZW，1 = none，5 = LZW，8 = deflate
+  int tiff_rows_per_strip; // 0 = 自动
+  int tiff_tile_size;      // 0 = strip 布局；>0 = tiled（16 的倍数）
 
   // PNG
   int png_compression; // 0..9，-1 = 默认 6
@@ -103,8 +105,8 @@ typedef struct ico_ssim {
 
 // 后端的一次探测结果。
 typedef struct ico_backend_info {
-  int backend; // ico_backend 的整数值
-  int ready;   // 1 = 可用
+  int backend;      // ico_backend 的整数值
+  int ready;        // 1 = 可用
   char detail[256]; // ready 时为 "ready"，否则是具体原因
 } ico_backend_info;
 
@@ -116,8 +118,8 @@ ICO_API const char *image_codec_offload_status_string(ico_status status);
 
 // 创建编解码器。preferred_backend 为 ICO_BACKEND_AUTO 时使用默认优先级
 // （CUDA → OpenCL → CPU），否则把它排到第一位、其余按默认顺序兜底。
-ICO_API ico_status
-image_codec_offload_create(ico_codec **out_codec, int preferred_backend);
+ICO_API ico_status image_codec_offload_create(ico_codec **out_codec,
+                                              int preferred_backend);
 
 // 销毁。NULL 安全。
 ICO_API void image_codec_offload_destroy(ico_codec *codec);
@@ -152,10 +154,11 @@ ICO_API ico_status image_codec_offload_decode(ico_codec *codec, int format,
 // 编码 ico_image -> 内存 buffer。
 // out/out_capacity 为输出缓冲；*out_len 返回实际（成功）或所需（不足）字节数，
 // 缓冲不足返回 ICO_ERR_OUT_OF_MEMORY，支持「先查后写」。
-ICO_API ico_status
-image_codec_offload_encode(ico_codec *codec, int format, const ico_image *img,
-                           const ico_encode_params *params, void *out,
-                           size_t *out_len, size_t out_capacity);
+ICO_API ico_status image_codec_offload_encode(ico_codec *codec, int format,
+                                              const ico_image *img,
+                                              const ico_encode_params *params,
+                                              void *out, size_t *out_len,
+                                              size_t out_capacity);
 
 // 释放 ico_image（含 data）。NULL 安全。
 ICO_API void image_codec_offload_image_free(ico_image *img);

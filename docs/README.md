@@ -29,9 +29,9 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 
 | 格式 | CUDA | OpenCL | CPU |
 | --- | --- | --- | --- |
-| JPEG | 编码/解码（nvJPEG，1 或 3 通道） | 编码/解码（1 或 3 通道，子采样可指定） | 编码/解码（1 或 3 通道） |
-| TIFF | 编码/解码（LZW/none，strip 与 tiled，1/3/4 通道） | 编码/解码（none/LZW，1 或 3 通道） | 编码/解码 |
-| PNG | 编码/解码（1/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1 或 3 通道） | 编码/解码 |
+| JPEG | 编码/解码（nvJPEG，1 或 3 通道；2/4 明确拒绝） | 编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | 编码/解码（1 或 3 通道；2/4 明确拒绝） |
+| TIFF | 编码/解码（LZW/none，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
+| PNG | 编码/解码（1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
 | MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（参考实现） |
 
 Vulkan 目前**没有任何 TIFF/PNG/JPEG 编解码与指标实现**，因此

@@ -26,7 +26,7 @@ bool retryable(Status status) {
          status == Status::UnsupportedFormat || status == Status::OutOfMemory;
 }
 
-std::string describeFailure(BackendKind kind, const Error& error) {
+std::string describeFailure(BackendKind kind, const Error &error) {
   std::string note = backendName(kind);
   note += ": ";
   note += statusName(error.code);
@@ -38,11 +38,11 @@ std::string describeFailure(BackendKind kind, const Error& error) {
   return note;
 }
 
-}  // namespace
+} // namespace
 
 template <class T, class Supports, class Fn>
-Result<T> Router::tryEach(const char* stage, Outcome* outcome,
-                          Supports&& supports, Fn&& fn) {
+Result<T> Router::tryEach(const char *stage, Outcome *outcome,
+                          Supports &&supports, Fn &&fn) {
   std::vector<std::string> notes;
   bool tried_any = false;
   // 第一个「这个后端做砸了」的错误：不拦路，但如果所有后端都失败，
@@ -50,7 +50,7 @@ Result<T> Router::tryEach(const char* stage, Outcome* outcome,
   std::optional<Error> hard_error;
 
   for (BackendKind kind : order_) {
-    ICodecBackend* backend = find(kind);
+    ICodecBackend *backend = find(kind);
     if (backend == nullptr) {
       notes.push_back(std::string(backendName(kind)) +
                       ": not built into this build");
@@ -137,13 +137,13 @@ void Router::setOrder(std::vector<BackendKind> order) {
 
   const auto push = [&normalized](BackendKind kind) {
     for (BackendKind existing : normalized) {
-      if (existing == kind) return;  // 去重：重复项没有语义
+      if (existing == kind) return; // 去重：重复项没有语义
     }
     normalized.push_back(kind);
   };
 
   for (BackendKind kind : order) {
-    if (kind == BackendKind::Cpu) continue;  // CPU 由下面统一追加到末尾
+    if (kind == BackendKind::Cpu) continue; // CPU 由下面统一追加到末尾
     push(kind);
   }
   push(BackendKind::Cpu);
@@ -156,7 +156,7 @@ std::vector<BackendKind> Router::order() const { return order_; }
 std::vector<BackendKind> Router::availableBackends() const {
   std::vector<BackendKind> out;
   out.reserve(backends_.size());
-  for (const auto& backend : backends_) {
+  for (const auto &backend : backends_) {
     out.push_back(backend->kind());
   }
   return out;
@@ -165,7 +165,7 @@ std::vector<BackendKind> Router::availableBackends() const {
 std::vector<std::pair<BackendKind, std::string>> Router::probeBackends() const {
   std::vector<std::pair<BackendKind, std::string>> out;
   out.reserve(backends_.size());
-  for (const auto& backend : backends_) {
+  for (const auto &backend : backends_) {
     const Result<void> ready = backend->available();
     out.emplace_back(backend->kind(),
                      ready ? std::string("ready") : ready.error().message);
@@ -173,8 +173,8 @@ std::vector<std::pair<BackendKind, std::string>> Router::probeBackends() const {
   return out;
 }
 
-ICodecBackend* Router::find(BackendKind kind) const {
-  for (const auto& backend : backends_) {
+ICodecBackend *Router::find(BackendKind kind) const {
+  for (const auto &backend : backends_) {
     if (backend->kind() == kind) return backend.get();
   }
   return nullptr;
@@ -182,56 +182,66 @@ ICodecBackend* Router::find(BackendKind kind) const {
 
 // ---- 编解码 ----
 
-Result<std::vector<uint8_t>> Router::encode(Format format, const Image& image,
-                                            const EncodeParams& params,
-                                            Outcome* outcome) {
+Result<std::vector<uint8_t>> Router::encode(Format format, const Image &image,
+                                            const EncodeParams &params,
+                                            Outcome *outcome) {
+  // JPEG 没有 Alpha 样本：2/4 通道进 JPEG 必须由调用方先决定怎么处理
+  // （丢掉还是先合成到背景上）。在这里静默降维是最坏的选择——文件能打开、
+  // 画质指标也正常，只有透明度凭空消失了。
+  if (format == Format::Jpeg && (image.channels == 2 || image.channels == 4)) {
+    return fail<std::vector<uint8_t>>(
+        Status::InvalidArgument,
+        "encode: jpeg has no alpha channel; convert to 1 or 3 channels first");
+  }
   return tryEach<std::vector<uint8_t>>(
       "encode", outcome,
-      [format](const ICodecBackend& backend) {
+      [format](const ICodecBackend &backend) {
         return backend.supports(format);
       },
-      [&](ICodecBackend& backend) {
+      [&](ICodecBackend &backend) {
         return backend.encode(format, image, params);
       });
 }
 
-Result<Image> Router::decode(Format format, const uint8_t* data, size_t size,
-                             Outcome* outcome) {
+Result<Image> Router::decode(Format format, const uint8_t *data, size_t size,
+                             Outcome *outcome) {
   return tryEach<Image>(
       "decode", outcome,
-      [format](const ICodecBackend& backend) {
+      [format](const ICodecBackend &backend) {
         return backend.supports(format);
       },
-      [&](ICodecBackend& backend) { return backend.decode(format, data, size); });
+      [&](ICodecBackend &backend) {
+        return backend.decode(format, data, size);
+      });
 }
 
 // ---- 指标 ----
 
-Result<double> Router::mse(const Image& a, const Image& b, Outcome* outcome) {
+Result<double> Router::mse(const Image &a, const Image &b, Outcome *outcome) {
   return tryEach<double>(
-      "mse", outcome, [](const ICodecBackend&) { return true; },
-      [&](ICodecBackend& backend) { return backend.mse(a, b); });
+      "mse", outcome, [](const ICodecBackend &) { return true; },
+      [&](ICodecBackend &backend) { return backend.mse(a, b); });
 }
 
-Result<double> Router::psnr(const Image& a, const Image& b, Outcome* outcome) {
+Result<double> Router::psnr(const Image &a, const Image &b, Outcome *outcome) {
   return tryEach<double>(
-      "psnr", outcome, [](const ICodecBackend&) { return true; },
-      [&](ICodecBackend& backend) { return backend.psnr(a, b); });
+      "psnr", outcome, [](const ICodecBackend &) { return true; },
+      [&](ICodecBackend &backend) { return backend.psnr(a, b); });
 }
 
-Result<SsimResult> Router::ssim(const Image& a, const Image& b,
-                                Outcome* outcome) {
+Result<SsimResult> Router::ssim(const Image &a, const Image &b,
+                                Outcome *outcome) {
   return tryEach<SsimResult>(
-      "ssim", outcome, [](const ICodecBackend&) { return true; },
-      [&](ICodecBackend& backend) { return backend.ssim(a, b); });
+      "ssim", outcome, [](const ICodecBackend &) { return true; },
+      [&](ICodecBackend &backend) { return backend.ssim(a, b); });
 }
 
 // ---- 强制指定后端 ----
 
 Result<std::vector<uint8_t>> Router::encodeWith(BackendKind kind, Format format,
-                                                const Image& image,
-                                                const EncodeParams& params) {
-  ICodecBackend* backend = find(kind);
+                                                const Image &image,
+                                                const EncodeParams &params) {
+  ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<std::vector<uint8_t>>(
         Status::BackendUnavailable,
@@ -239,16 +249,22 @@ Result<std::vector<uint8_t>> Router::encodeWith(BackendKind kind, Format format,
   }
   if (!backend->supports(format)) {
     return fail<std::vector<uint8_t>>(
-        Status::UnsupportedFormat,
-        std::string("router: ") + backendName(kind) + " does not support " +
-            formatName(format));
+        Status::UnsupportedFormat, std::string("router: ") + backendName(kind) +
+                                       " does not support " +
+                                       formatName(format));
+  }
+  if (format == Format::Jpeg && (image.channels == 2 || image.channels == 4)) {
+    return fail<std::vector<uint8_t>>(
+        Status::InvalidArgument,
+        "encodeWith: jpeg has no alpha channel; convert to 1 or 3 channels "
+        "first");
   }
   return backend->encode(format, image, params);
 }
 
 Result<Image> Router::decodeWith(BackendKind kind, Format format,
-                                 const uint8_t* data, size_t size) {
-  ICodecBackend* backend = find(kind);
+                                 const uint8_t *data, size_t size) {
+  ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<Image>(Status::BackendUnavailable,
                        std::string("router: backend not built: ") +
@@ -262,9 +278,9 @@ Result<Image> Router::decodeWith(BackendKind kind, Format format,
   return backend->decode(format, data, size);
 }
 
-Result<double> Router::mseWith(BackendKind kind, const Image& a,
-                               const Image& b) {
-  ICodecBackend* backend = find(kind);
+Result<double> Router::mseWith(BackendKind kind, const Image &a,
+                               const Image &b) {
+  ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<double>(Status::BackendUnavailable,
                         std::string("router: backend not built: ") +
@@ -273,9 +289,9 @@ Result<double> Router::mseWith(BackendKind kind, const Image& a,
   return backend->mse(a, b);
 }
 
-Result<double> Router::psnrWith(BackendKind kind, const Image& a,
-                                const Image& b) {
-  ICodecBackend* backend = find(kind);
+Result<double> Router::psnrWith(BackendKind kind, const Image &a,
+                                const Image &b) {
+  ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<double>(Status::BackendUnavailable,
                         std::string("router: backend not built: ") +
@@ -284,9 +300,9 @@ Result<double> Router::psnrWith(BackendKind kind, const Image& a,
   return backend->psnr(a, b);
 }
 
-Result<SsimResult> Router::ssimWith(BackendKind kind, const Image& a,
-                                    const Image& b) {
-  ICodecBackend* backend = find(kind);
+Result<SsimResult> Router::ssimWith(BackendKind kind, const Image &a,
+                                    const Image &b) {
+  ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<SsimResult>(Status::BackendUnavailable,
                             std::string("router: backend not built: ") +
@@ -295,5 +311,5 @@ Result<SsimResult> Router::ssimWith(BackendKind kind, const Image& a,
   return backend->ssim(a, b);
 }
 
-}  // namespace offload
-}  // namespace image_codec
+} // namespace offload
+} // namespace image_codec

@@ -24,18 +24,21 @@ namespace common {
 struct BmpHeader {
   int width = 0;
   int height = 0;
-  int channels = 0;  // 8-bit -> 1；24/32-bit -> 3
+  int channels = 0; // 8-bit -> 1；24-bit -> 3；32-bit -> 4（带 alpha）
 };
 
-Result<BmpHeader> probeBmp(const uint8_t* data, size_t size);
+Result<BmpHeader> probeBmp(const uint8_t *data, size_t size);
 
-// 读 BMP。支持 8-bit（调色板灰度为 1 通道）、24-bit、32-bit（丢弃 alpha）。
+// 读 BMP。支持 8-bit（调色板灰度为 1 通道）、24-bit、32-bit（输出 4 通道，
+// BI_BITFIELDS 采用文件里的 Alpha；BI_RGB 的保留字节按不透明处理）。
 // top-down 与 bottom-up、行尾 4 字节对齐都处理。
-Result<Image> readBmp(const uint8_t* data, size_t size);
+Result<Image> readBmp(const uint8_t *data, size_t size);
 
-// 写 BMP。channels == 1 写 8-bit 调色板灰度；channels == 3 写 24-bit BGR。
-Result<std::vector<uint8_t>> writeBmp(const Image& image);
+// 写 BMP。channels == 1 写 8-bit 调色板灰度；3 写 24-bit BGR；
+// 4 写 32-bit BI_BITFIELDS（RGBA 掩码，Alpha 原样写出）。
+// 2 通道（灰度+Alpha）在 BMP 里没有表示法，明确返回 UnsupportedFormat。
+Result<std::vector<uint8_t>> writeBmp(const Image &image);
 
-}  // namespace common
-}  // namespace offload
-}  // namespace image_codec
+} // namespace common
+} // namespace offload
+} // namespace image_codec

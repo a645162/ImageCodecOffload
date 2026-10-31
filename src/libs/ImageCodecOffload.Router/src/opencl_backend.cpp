@@ -115,11 +115,13 @@ public:
     if (auto ok = available(); !ok) {
       return std::unexpected(ok.error());
     }
-    // 通道保真：1 = 灰度、3 = RGB，两边都原样交给后端；后端不会再升维。
-    if (image.channels != 1 && image.channels != 3) {
+    // 通道保真：1..4 都原样交给后端，后端不会再升维或丢 Alpha。
+    // 具体格式能不能表示某种通道数（例如 JPEG 没有 Alpha）由后端自己回答，
+    // 路由层不再替它猜——猜错一次就是一个「静默降维」。
+    if (image.channels < 1 || image.channels > 4) {
       return fail<std::vector<uint8_t>>(
           Status::UnsupportedFormat,
-          "opencl: only 1- or 3-channel images are supported");
+          "opencl: only 1- to 4-channel images are supported");
     }
 
     image_codec_image img;
