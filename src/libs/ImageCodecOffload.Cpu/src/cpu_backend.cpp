@@ -34,7 +34,17 @@ EncodeCapabilities CpuBackend::encodeCapabilities() const {
   // 失败」，必须在能力表里如实报出来，让上层改参数而不是换后端硬试。
   cap.tiff_jpeg_compression = TIFFIsCODECConfigured(COMPRESSION_JPEG) != 0;
   cap.png_strategy = true;
+  // 分片：容器由 cpu::assembleClassicTiff() 自己写，条数/片高由调用方决定。
+  // 压缩方式覆盖 NONE / LZW / Deflate / PackBits（JPEG-in-TIFF 与 tiled 不做）。
+  cap.tiff_strip_sharding = true;
   return cap;
+}
+
+Result<std::vector<uint8_t>>
+CpuBackend::encodeTiffStrip(const Image& image, const int first_row,
+                            const int rows, const EncodeParams& params) {
+  // 必须写完整限定：不限定会被解析成这个成员函数自己（无限递归）。
+  return cpu::encodeTiffStrip(image, first_row, rows, params);
 }
 
 Result<std::vector<uint8_t>> CpuBackend::encode(Format format,

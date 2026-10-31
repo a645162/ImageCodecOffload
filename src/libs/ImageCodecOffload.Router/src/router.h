@@ -72,6 +72,14 @@ class Router {
                                      const EncodeParams& params,
                                      Outcome* outcome = nullptr);
 
+  // 把 TIFF 的一段行独立压缩成一条 strip 的压缩流（分片并行用）。
+  // 只考虑声明了 `tiff_strip_sharding` 的后端：其它后端做不到「与整图编码
+  // 逐字节相同的片」。
+  Result<std::vector<uint8_t>> encodeTiffStrip(const Image& image,
+                                               int first_row, int rows,
+                                               const EncodeParams& params,
+                                               Outcome* outcome = nullptr);
+
   Result<Image> decode(Format format, const uint8_t* data, size_t size,
                        Outcome* outcome = nullptr);
 
@@ -88,6 +96,10 @@ class Router {
   Result<std::vector<uint8_t>> encodeWith(BackendKind kind, Format format,
                                           const Image& image,
                                           const EncodeParams& params);
+  Result<std::vector<uint8_t>> encodeTiffStripWith(BackendKind kind,
+                                                   const Image& image,
+                                                   int first_row, int rows,
+                                                   const EncodeParams& params);
   Result<Image> decodeWith(BackendKind kind, Format format, const uint8_t* data,
                            size_t size);
   Result<double> mseWith(BackendKind kind, const Image& a, const Image& b);

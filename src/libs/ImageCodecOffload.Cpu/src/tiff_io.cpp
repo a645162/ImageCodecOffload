@@ -13,6 +13,8 @@
 // 磁盘往返，并且要额外处理临时文件的清理与并发。
 #include "tiff_io.h"
 
+#include "tiff_container.h"
+
 #include <tiffio.h>
 
 #include <cstring>
@@ -281,6 +283,144 @@ bool readRaw8Bit(TIFF *tif, int width, int height, int spp, bool tile_organized,
   return true;
 }
 
+// 整图编码与「单条 strip 编码」共用的标签设置。
+//
+// 分片能逐字节复现整图编码的前提就是两边标签**完全一致**：任何一处只写在
+// 整图路径里，拼出来的文件都会比整图编码少/多一个标签（12 字节），表现为
+// 「像素对、校验和不对」。因此这里必须只有一份实现。
+bool setTiffTags(TIFF *tif, const int width, const int height,
+                 const int channels, const EncodeParams &params) {
+  TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, static_cast<uint32_t>(width));
+  TIFFSetField(tif, TIFFTAG_IMAGELENGTH, static_cast<uint32_t>(height));
+  TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, 8);
+  TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, static_cast<uint16_t>(channels));
+  TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+  TIFFSetField(tif, TIFFTAG_PHOTOMETRIC,
+               channels <= 2 ? PHOTOMETRIC_MINISBLACK : PHOTOMETRIC_RGB);
+  // spp 比「颜色样本数」多出来的那个样本必须显式声明成 Alpha：
+  // 少了这个 tag，spp==4 的文件在规范上会被读成 CMYK，颜色整体错位。
+  if (channels == 2 || channels == 4) {
+    uint16_t extra = EXTRASAMPLE_UNASSALPHA;
+    TIFFSetField(tif, TIFFTAG_EXTRASAMPLES, 1, &extra);
+  }
+  TIFFSetField(tif, TIFFTAG_COMPRESSION,
+               compressionTag(params.tiff_compression));
+  TIFFSetField(tif, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+
+  // Predictor 只在**明确要求**时才写标签。
+  //
+  // 这里曾经无条件写 TIFFTAG_PREDICTOR=1（PREDICTOR_NONE），理由是「LZW 的
+  // 规范配套」。值为 1 的标签虽然像素语义等于「不预测」，却会多出一个 12
+  // 字节的 IFD 条目——于是同一张图、同一组参数，走 libtiff 的旧写法和走本库
+  // 就差 12 字节，「逐字节一致」这一条永远不成立。默认不写，才是最中性的
+  // 行为；要显式声明 Predictor=NONE 的调用方可以传 1。
+  //
+  // Predictor 只在**该压缩方式真的有预测器**时才写得进去：libtiff 的
+  // Predictor 字段由 tif_predict.c 在注册 LZW / Deflate 时合并进字段表，
+  // COMPRESSION_NONE 与 PackBits 下 `TIFFSetField` 会报 "Unknown tag 317"
+  // 并静默丢弃。这里显式判断，避免每次编码都往 stderr 打一行警告，也让
+  // 容器拼装（tiff_container.cpp）有同一份规则可依。
+  if (params.tiff_predictor > 0 &&
+      compressionSupportsPredictor(compressionTag(params.tiff_compression))) {
+    TIFFSetField(tif, TIFFTAG_PREDICTOR,
+                 static_cast<uint16_t>(params.tiff_predictor));
+  }
+
+  // 分辨率：只有给了 DPI 才写。ResolutionUnit 缺省时按英寸（TIFF 6.0 §8 的
+  // 默认解释），显式给 3 才写厘米。写 XResolution 却不写单位，是最常见的
+  // 「文件能打开但尺寸标注错」的来源。
+  if (params.tiff_x_dpi > 0 || params.tiff_y_dpi > 0) {
+    const int x_dpi = params.tiff_x_dpi > 0 ? params.tiff_x_dpi : 72;
+    const int y_dpi = params.tiff_y_dpi > 0 ? params.tiff_y_dpi : x_dpi;
+    TIFFSetField(tif, TIFFTAG_XRESOLUTION, static_cast<float>(x_dpi));
+    TIFFSetField(tif, TIFFTAG_YRESOLUTION, static_cast<float>(y_dpi));
+    const uint16_t unit =
+        params.tiff_resolution_unit == 3 ? RESUNIT_CENTIMETER : RESUNIT_INCH;
+    TIFFSetField(tif, TIFFTAG_RESOLUTIONUNIT, unit);
+  }
+
+  // JPEG 压缩的质量只在 compression=7 时才有意义；libtiff 的 JPEG 编解码
+  // 通过 JPEGQUALITY 取值（1..100）。
+  if (params.tiff_compression == 7) {
+    const int quality = params.tiff_jpeg_quality >= 0 ? params.tiff_jpeg_quality
+                                                      : params.jpeg_quality;
+    TIFFSetField(tif, TIFFTAG_JPEGQUALITY,
+                 quality < 1 ? 1 : (quality > 100 ? 100 : quality));
+  }
+  return true;
+}
+
+// 单条 strip 的独立压缩产物是「一张只有一 strip 的小 TIFF」，压缩流就是
+// 它目录**之前**的那段字节。这里按目录里的 StripOffsets/StripByteCounts
+// 取回来，而不是假设「压缩流一定从偏移 8 开始」——那个假设在 libtiff 换
+// 布局策略时会静默取到目录本身。
+Result<std::vector<uint8_t>>
+extractFirstStrip(const std::vector<uint8_t> &file) {
+  if (file.size() < 8) {
+    return fail<std::vector<uint8_t>>(Status::Internal,
+                                      "tiff: strip output too small");
+  }
+  const bool little = file[0] == 'I' && file[1] == 'I';
+  const bool big = file[0] == 'M' && file[1] == 'M';
+  if (!little && !big) {
+    return fail<std::vector<uint8_t>>(Status::Internal,
+                                      "tiff: strip output has no byte order");
+  }
+  const auto u16 = [&](const size_t at) -> unsigned {
+    return little ? static_cast<unsigned>(file[at] | (file[at + 1] << 8))
+                  : static_cast<unsigned>((file[at] << 8) | file[at + 1]);
+  };
+  const auto u32 = [&](const size_t at) -> unsigned {
+    return little
+               ? static_cast<unsigned>(file[at] | (file[at + 1] << 8) |
+                                       (file[at + 2] << 16) |
+                                       (file[at + 3] << 24))
+               : static_cast<unsigned>((file[at] << 24) | (file[at + 1] << 16) |
+                                       (file[at + 2] << 8) | file[at + 3]);
+  };
+
+  const size_t ifd = u32(4);
+  if (ifd + 2 > file.size()) {
+    return fail<std::vector<uint8_t>>(Status::Internal,
+                                      "tiff: strip output has no directory");
+  }
+  const unsigned count = u16(ifd);
+
+  long long offset = -1;
+  long long size = -1;
+  for (unsigned index = 0; index < count; ++index) {
+    const size_t entry = ifd + 2 + static_cast<size_t>(index) * 12;
+    if (entry + 12 > file.size()) break;
+    const unsigned tag = u16(entry);
+    if (tag != TIFFTAG_STRIPOFFSETS && tag != TIFFTAG_STRIPBYTECOUNTS) {
+      continue;
+    }
+    const unsigned type = u16(entry + 2);
+    const unsigned items = u32(entry + 4);
+    const size_t unit = type == 3 ? 2 : (type == 4 ? 4 : 0);
+    if (unit == 0 || items == 0) continue;
+    const size_t at = unit * items <= 4 ? entry + 8 : u32(entry + 8);
+    if (at + unit > file.size()) continue;
+    const long long value = unit == 2 ? static_cast<long long>(u16(at))
+                                      : static_cast<long long>(u32(at));
+    if (tag == TIFFTAG_STRIPOFFSETS) {
+      offset = value;
+    } else {
+      size = value;
+    }
+  }
+
+  if (offset < 0 || size < 0 ||
+      static_cast<size_t>(offset) + static_cast<size_t>(size) > file.size()) {
+    return fail<std::vector<uint8_t>>(
+        Status::Internal, "tiff: strip output has no usable strip span");
+  }
+  return std::vector<uint8_t>(
+      file.begin() + static_cast<long>(offset),
+      file.begin() + static_cast<long>(static_cast<size_t>(offset) +
+                                       static_cast<size_t>(size)));
+}
+
 } // namespace
 
 Result<std::vector<uint8_t>> encodeTiff(const Image &image,
@@ -305,58 +445,10 @@ Result<std::vector<uint8_t>> encodeTiff(const Image &image,
                                       "tiff: TIFFClientOpen(w) failed");
   }
 
-  TIFFSetField(tif.get(), TIFFTAG_IMAGEWIDTH,
-               static_cast<uint32_t>(image.width));
-  TIFFSetField(tif.get(), TIFFTAG_IMAGELENGTH,
-               static_cast<uint32_t>(image.height));
-  TIFFSetField(tif.get(), TIFFTAG_BITSPERSAMPLE, 8);
-  TIFFSetField(tif.get(), TIFFTAG_SAMPLESPERPIXEL,
-               static_cast<uint16_t>(image.channels));
-  TIFFSetField(tif.get(), TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
-  TIFFSetField(tif.get(), TIFFTAG_PHOTOMETRIC,
-               image.channels <= 2 ? PHOTOMETRIC_MINISBLACK : PHOTOMETRIC_RGB);
-  // spp 比「颜色样本数」多出来的那个样本必须显式声明成 Alpha：
-  // 少了这个 tag，spp==4 的文件在规范上会被读成 CMYK，颜色整体错位。
-  if (image.channels == 2 || image.channels == 4) {
-    uint16_t extra = EXTRASAMPLE_UNASSALPHA;
-    TIFFSetField(tif.get(), TIFFTAG_EXTRASAMPLES, 1, &extra);
-  }
-  TIFFSetField(tif.get(), TIFFTAG_COMPRESSION,
-               compressionTag(params.tiff_compression));
-  TIFFSetField(tif.get(), TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
-
-  // Predictor 只在**明确要求**时才写标签。
-  //
-  // 这里曾经无条件写 TIFFTAG_PREDICTOR=1（PREDICTOR_NONE），理由是「LZW 的
-  // 规范配套」。值为 1 的标签虽然像素语义等于「不预测」，却会多出一个 12
-  // 字节的 IFD 条目——于是同一张图、同一组参数，走 libtiff 的旧写法和走本库
-  // 就差 12 字节，「逐字节一致」这一条永远不成立。默认不写，才是最中性的
-  // 行为；要显式声明 Predictor=NONE 的调用方可以传 1。
-  if (params.tiff_predictor > 0) {
-    TIFFSetField(tif.get(), TIFFTAG_PREDICTOR,
-                 static_cast<uint16_t>(params.tiff_predictor));
-  }
-
-  // 分辨率：只有给了 DPI 才写。ResolutionUnit 缺省时按英寸（TIFF 6.0 §8 的
-  // 默认解释），显式给 3 才写厘米。写 XResolution 却不写单位，是最常见的
-  // 「文件能打开但尺寸标注错」的来源。
-  if (params.tiff_x_dpi > 0 || params.tiff_y_dpi > 0) {
-    const int x_dpi = params.tiff_x_dpi > 0 ? params.tiff_x_dpi : 72;
-    const int y_dpi = params.tiff_y_dpi > 0 ? params.tiff_y_dpi : x_dpi;
-    TIFFSetField(tif.get(), TIFFTAG_XRESOLUTION, static_cast<float>(x_dpi));
-    TIFFSetField(tif.get(), TIFFTAG_YRESOLUTION, static_cast<float>(y_dpi));
-    const uint16_t unit =
-        params.tiff_resolution_unit == 3 ? RESUNIT_CENTIMETER : RESUNIT_INCH;
-    TIFFSetField(tif.get(), TIFFTAG_RESOLUTIONUNIT, unit);
-  }
-
-  // JPEG 压缩的质量只在 compression=7 时才有意义；libtiff 的 JPEG 编解码
-  // 通过 JPEGQUALITY 取值（1..100）。
-  if (params.tiff_compression == 7) {
-    const int quality = params.tiff_jpeg_quality >= 0 ? params.tiff_jpeg_quality
-                                                      : params.jpeg_quality;
-    TIFFSetField(tif.get(), TIFFTAG_JPEGQUALITY,
-                 quality < 1 ? 1 : (quality > 100 ? 100 : quality));
+  if (!setTiffTags(tif.get(), image.width, image.height, image.channels,
+                   params)) {
+    return fail<std::vector<uint8_t>>(Status::EncodeFailed,
+                                      "tiff: set tags failed");
   }
 
   const int tile = params.tiff_tile_size;
@@ -385,6 +477,104 @@ Result<std::vector<uint8_t>> encodeTiff(const Image &image,
   tif.reset();
 
   return out;
+}
+
+TiffLayout layoutFromParams(const Image &image, const EncodeParams &params,
+                            const int rows_per_strip) {
+  TiffLayout layout;
+  layout.width = image.width;
+  layout.height = image.height;
+  layout.channels = image.channels;
+  layout.compression = compressionTag(params.tiff_compression);
+  // 与 setTiffTags 同一条件：该压缩方式不接受 Predictor 时**不写标签**，
+  // 这样拼装结果与整图编码逐字节相同（NONE / PackBits 下请求 Predictor
+  // 是 no-op，而不是让文件多出一个无效的 12 字节 IFD 条目）。
+  layout.predictor =
+      params.tiff_predictor > 0 && compressionSupportsPredictor(
+                                       compressionTag(params.tiff_compression))
+          ? params.tiff_predictor
+          : -1;
+  if (params.tiff_x_dpi > 0 || params.tiff_y_dpi > 0) {
+    layout.x_dpi = params.tiff_x_dpi > 0 ? params.tiff_x_dpi : 72;
+    layout.y_dpi = params.tiff_y_dpi > 0 ? params.tiff_y_dpi : layout.x_dpi;
+    layout.resolution_unit = params.tiff_resolution_unit;
+  }
+  layout.rows_per_strip = rows_per_strip > 0 ? rows_per_strip : image.height;
+  return layout;
+}
+
+Result<std::vector<uint8_t>> encodeTiffStrip(const Image &image,
+                                             const int first_row,
+                                             const int rows,
+                                             const EncodeParams &params) {
+  if (!image.valid()) {
+    return fail<std::vector<uint8_t>>(Status::InvalidArgument,
+                                      "tiff: invalid image");
+  }
+  if (image.channels < 1 || image.channels > 4) {
+    return fail<std::vector<uint8_t>>(Status::UnsupportedFormat,
+                                      "tiff: unsupported channel count");
+  }
+  if (rows <= 0 || first_row < 0 || first_row + rows > image.height) {
+    return fail<std::vector<uint8_t>>(Status::InvalidArgument,
+                                      "tiff: strip row range out of bounds");
+  }
+  // tiled 布局用的是 Tile* 数组，与 Strip* 是两套拼装规则。
+  if (params.tiff_tile_size > 0) {
+    return fail<std::vector<uint8_t>>(
+        Status::UnsupportedFormat,
+        "tiff: strip sharding does not support tiled layout");
+  }
+  if (!compressionSupportsStripSharding(
+          compressionTag(params.tiff_compression))) {
+    return fail<std::vector<uint8_t>>(
+        Status::UnsupportedFormat,
+        "tiff: compression does not support strip sharding");
+  }
+
+  std::vector<uint8_t> out;
+  MemWriter writer;
+  writer.out = &out;
+
+  TiffPtr tif(openWriter(&writer));
+  if (!tif) {
+    return fail<std::vector<uint8_t>>(Status::Internal,
+                                      "tiff: TIFFClientOpen(w) failed");
+  }
+
+  // 关键：这张「小图」的 ImageLength 与 RowsPerStrip 都等于片高，标签与整图
+  // 编码一一对应。libtiff 的 LZW 字典与 Predictor 状态都按 strip 重置，
+  // 因此得到的压缩流与整图多 strip 编码里对应那片逐字节相同（tests 里对拍）。
+  if (!setTiffTags(tif.get(), image.width, rows, image.channels, params)) {
+    return fail<std::vector<uint8_t>>(Status::EncodeFailed,
+                                      "tiff: set tags failed");
+  }
+  if (TIFFSetField(tif.get(), TIFFTAG_ROWSPERSTRIP,
+                   static_cast<uint32_t>(rows)) != 1) {
+    return fail<std::vector<uint8_t>>(Status::EncodeFailed,
+                                      "tiff: set rows_per_strip failed");
+  }
+
+  // 逐行写而不是先把行拷进连续缓冲：1.89 GiB 的帧按 256 行切片，
+  // 每片还要再拷一次就是白白多一遍全帧带宽。scanline 与 encoded-strip
+  // 产出的压缩流是逐字节相同的（原型已验证）。
+  const size_t row_bytes = image.rowBytes();
+  for (int y = 0; y < rows; ++y) {
+    auto *row = const_cast<uint8_t *>(
+        image.pixels.data() + static_cast<size_t>(first_row + y) * row_bytes);
+    if (TIFFWriteScanline(tif.get(), row, static_cast<uint32_t>(y), 0) < 0) {
+      return fail<std::vector<uint8_t>>(Status::EncodeFailed,
+                                        "tiff: write scanline failed");
+    }
+  }
+
+  if (TIFFFlush(tif.get()) != 1) {
+    return fail<std::vector<uint8_t>>(Status::EncodeFailed,
+                                      "tiff: flush failed");
+  }
+  tif.reset(); // TIFFClose 写目录
+
+  return extractFirstStrip(out);
 }
 
 Result<Image> decodeTiff(const uint8_t *data, size_t size) {

@@ -45,6 +45,17 @@ public:
   virtual Result<std::vector<uint8_t>> encode(Format format, const Image &image,
                                               const EncodeParams &params) = 0;
 
+  // 把 [first_row, first_row + rows) 这几行**独立压缩**成一条 TIFF strip 的
+  // 压缩流（不含容器）。容器由 cpu::assembleClassicTiff() 统一拼装。
+  //
+  // 只有 encodeCapabilities().tiff_strip_sharding 为 true 的后端才需要实现；
+  // 默认返回 UnsupportedFormat。返回的字节必须与「同一张图用同样的标签、
+  // RowsPerStrip = rows 整图编码」时该条的压缩流逐位相同，否则拼出来的文件
+  // 会同时包含两种参数的片。
+  virtual Result<std::vector<uint8_t>>
+  encodeTiffStrip(const Image &image, int first_row, int rows,
+                  const EncodeParams &params);
+
   // 这个后端能表达哪些编码参数（见 EncodeCapabilities）。默认「什么都不
   // 保证」——新后端不实现它时，路由层会拒绝进阶参数而不是悄悄忽略。
   virtual EncodeCapabilities encodeCapabilities() const { return {}; }
@@ -58,6 +69,16 @@ public:
   virtual Result<double> psnr(const Image &a, const Image &b) = 0;
   virtual Result<SsimResult> ssim(const Image &a, const Image &b) = 0;
 };
+
+// 默认实现放在类外而不是写成 `= 0`：分片是 TIFF 专用的优化，让每个后端
+// （含三个 GPU 子项目）都去实现一个自己用不到的方法，只会制造四份空壳。
+inline Result<std::vector<uint8_t>>
+ICodecBackend::encodeTiffStrip(const Image & /*image*/, int /*first_row*/,
+                               int /*rows*/, const EncodeParams & /*params*/) {
+  return fail<std::vector<uint8_t>>(
+      Status::UnsupportedFormat,
+      "backend: tiff strip sharding not implemented");
+}
 
 } // namespace offload
 } // namespace image_codec

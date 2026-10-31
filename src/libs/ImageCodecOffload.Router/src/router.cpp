@@ -263,6 +263,8 @@ EncodeCapabilities Router::encodeCapabilities() const {
     out.tiff_jpeg_compression =
         out.tiff_jpeg_compression || cap.tiff_jpeg_compression;
     out.png_strategy = out.png_strategy || cap.png_strategy;
+    out.tiff_strip_sharding =
+        out.tiff_strip_sharding || cap.tiff_strip_sharding;
   }
   return out;
 }
@@ -323,6 +325,59 @@ Result<std::vector<uint8_t>> Router::encode(Format format, const Image &image,
       [&](ICodecBackend &backend) {
         return backend.encode(format, image, params);
       });
+}
+
+Result<std::vector<uint8_t>>
+Router::encodeTiffStrip(const Image &image, const int first_row, const int rows,
+                        const EncodeParams &params, Outcome *outcome) {
+  return tryEach<std::vector<uint8_t>>(
+      "encodeTiffStrip", outcome,
+      [&params](const ICodecBackend &backend) -> Result<void> {
+        if (!backend.supports(Format::Tiff)) {
+          return fail<void>(Status::UnsupportedFormat,
+                            std::string("format not supported: ") +
+                                formatName(Format::Tiff));
+        }
+        // 分片是**额外**能力：整图编码支持 TIFF 不等于能把一段行独立压成
+        // 与整图编码逐字节相同的片。没声明的后端直接跳过，不做近似。
+        if (!backend.encodeCapabilities().tiff_strip_sharding) {
+          return fail<void>(Status::UnsupportedFormat,
+                            "strip sharding not supported");
+        }
+        return checkCapabilities(backend.encodeCapabilities(), Format::Tiff,
+                                 params);
+      },
+      [&](ICodecBackend &backend) {
+        return backend.encodeTiffStrip(image, first_row, rows, params);
+      });
+}
+
+Result<std::vector<uint8_t>>
+Router::encodeTiffStripWith(BackendKind kind, const Image &image,
+                            const int first_row, const int rows,
+                            const EncodeParams &params) {
+  ICodecBackend *backend = find(kind);
+  if (backend == nullptr) {
+    return fail<std::vector<uint8_t>>(
+        Status::BackendUnavailable,
+        std::string("router: backend not built: ") + backendName(kind));
+  }
+  if (!backend->supports(Format::Tiff)) {
+    return fail<std::vector<uint8_t>>(
+        Status::UnsupportedFormat,
+        std::string("router: ") + backendName(kind) + " does not support tiff");
+  }
+  if (!backend->encodeCapabilities().tiff_strip_sharding) {
+    return fail<std::vector<uint8_t>>(
+        Status::UnsupportedFormat, std::string("router: ") + backendName(kind) +
+                                       " does not support tiff strip sharding");
+  }
+  if (auto ok = checkCapabilities(backend->encodeCapabilities(), Format::Tiff,
+                                  params);
+      !ok) {
+    return std::unexpected(ok.error());
+  }
+  return backend->encodeTiffStrip(image, first_row, rows, params);
 }
 
 Result<Image> Router::decode(Format format, const uint8_t *data, size_t size,

@@ -7,6 +7,8 @@
 add_library(ImageCodecOffload.Cpu STATIC
   src/tiff_io.h
   src/tiff_io.cpp
+  src/tiff_container.h
+  src/tiff_container.cpp
   src/png_io.h
   src/png_io.cpp
   src/jpeg_io.h

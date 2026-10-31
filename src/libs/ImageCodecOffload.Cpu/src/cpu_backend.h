@@ -37,6 +37,10 @@ class CpuBackend final : public ICodecBackend {
   // libtiff 自身没有编入 JPEG 编解码时，TIFF 的 JPEG 压缩做不到。
   EncodeCapabilities encodeCapabilities() const override;
 
+  Result<std::vector<uint8_t>>
+  encodeTiffStrip(const Image& image, int first_row, int rows,
+                  const EncodeParams& params) override;
+
   Result<Image> decode(Format format, const uint8_t* data,
                        size_t size) override;
 

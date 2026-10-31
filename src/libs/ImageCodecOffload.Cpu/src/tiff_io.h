@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "image_codec_types.h"
+#include "tiff_container.h"
 
 namespace image_codec {
 namespace offload {
@@ -27,6 +28,18 @@ namespace cpu {
 
 Result<std::vector<uint8_t>> encodeTiff(const Image& image,
                                         const EncodeParams& params);
+
+// 把 [first_row, first_row + rows) 独立压缩成一条 strip 的压缩流（不含容器）。
+//
+// 结果必须与「同一张图、同样标签、RowsPerStrip = rows 整图编码」时对应那条
+// 的压缩流逐字节相同——分片拼装靠的就是这一点。
+Result<std::vector<uint8_t>> encodeTiffStrip(const Image& image, int first_row,
+                                             int rows,
+                                             const EncodeParams& params);
+
+// 由参数推导容器布局（压缩标签映射、DPI 缺省、片高）。
+TiffLayout layoutFromParams(const Image& image, const EncodeParams& params,
+                            int rows_per_strip);
 
 Result<Image> decodeTiff(const uint8_t* data, size_t size);
 
