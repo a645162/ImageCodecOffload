@@ -89,6 +89,15 @@ class Router {
   // 默认优先级：GPU 快的排前面，CPU 永远最后。
   static std::vector<BackendKind> defaultOrder();
 
+  // 当前顺序下**这组参数**能被表达的能力集合（各后端取并集：自动模式
+  // 遇到不支持的后端会换下一个，所以只要有一个能表达，请求就能成立）。
+  EncodeCapabilities encodeCapabilities() const;
+
+  // 某个后端能否表达这组参数。支持 → 返回空；不支持 → UnsupportedFormat
+  // 并写清**具体是哪一项**，让上层日志能回答「为什么这条 lane 不接这一单」。
+  Result<void> checkEncodeParams(BackendKind kind, Format format,
+                                 const EncodeParams& params) const;
+
  private:
   ICodecBackend* find(BackendKind kind) const;
 

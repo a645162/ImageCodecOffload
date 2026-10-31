@@ -60,7 +60,7 @@ LZW 字典构建与 zlib deflate/inflate 严格串行，留在 CPU。`capabiliti
 
 | 失败类别 | 判定 | 行为 |
 | --- | --- | --- |
-| 后端不可用 / 不支持该格式或方向 / 资源不足 | 这个后端**不适合这一单** | 记进 notes，继续试下一个 |
+| 后端不可用 / 不支持该格式或方向 / **这组参数该后端表达不了** / 资源不足 | 这个后端**不适合这一单** | 记进 notes，继续试下一个 |
 | 解码失败 / 编码失败 / IO / 内部错误 | 这个后端**做砸了** | 也记进 notes、**不拦路**（1.9 GB 的图不该因为 OpenCL 分配不出设备缓冲就连 CPU 都不试），但如果所有后端都失败，返回第一个这样的错误 |
 | 参数非法 | 调用方的 bug | 立刻中止，不换后端、不掩盖 |
 
@@ -99,6 +99,48 @@ backend: cpu  (fell back)
 - 路由层仍然先用 `ImageCodecOffload.Cpu` 的容器头探测（`probeChannels`）问出
   「这张图本来几通道」，与后端能表示的通道数不匹配就明确返回
   `unsupported-format`，交给下一个后端。允许「做不到」，不允许「做到了但改变了语义」。
+
+## 编码参数与能力表
+
+`ico_encode_params` 覆盖到「与源工具的存图参数一一对应」为止，缺一项就意味着上层只能在
+自己没有参数时才能保证字节一致：
+
+| 格式 | 参数 |
+| --- | --- |
+| JPEG | `quality` / `subsampling` / `progressive` / `optimize_huffman` / `restart_interval` / `luma_quality` / `chroma_quality` |
+| TIFF | `compression`（1 none / 5 LZW / 7 JPEG / 8 AdobeDeflate / 32773 PackBits）/ `rows_per_strip` / `tile_size` / `predictor` / `x_dpi` / `y_dpi` / `resolution_unit` / `jpeg_quality` |
+| PNG | `compression` / `filter` / `strategy`（0 default / 1 filtered / 2 huffman / 3 rle / 4 fixed） |
+
+**「0 / 负数 = 未指定」，PNG 的两个字段除外**：C 调用方习惯把结构体清零，若把 0 当成
+「质量 0」就会被夹到 1，而调用方以为自己什么都没改。所以除 PNG 外，清零后的结构体必须与
+内部默认值产出**逐字节相同**的文件（`tests/ico_test.cpp` 的 `testCapiAdvancedParams` 对
+JPEG/TIFF 做了这条比对）。
+
+PNG 的 `png_compression` 与 `png_filter` 是刻意的不对称：zlib 等级 0 与「不滤波」都是合法
+取值，用 0 表示未指定会让它们永远传不进去（这两个值确实曾经丢失过），所以它们的「未指定」
+是 **-1**，清零结构体等于「等级 0 + filter None」。
+
+**TIFF 默认不写 `Predictor` 标签**（`tiff_predictor <= 0`）。值为 1 的 Predictor 也是合法的
+「无预测」，但会多一个 12 字节的 IFD 条目——于是同一张图、同一组参数，走 libtiff 的旧写法
+与走本库就差 12 字节，「逐字节一致」永远不成立。要显式声明 `PREDICTOR_NONE` 就传 1
+（测试里锁死了「比默认多恰好 12 字节」）。
+
+**能力表 `EncodeCapabilities` / `ico_encode_capabilities`** 回答的是「这个后端会不会把我的
+参数悄悄丢掉」，与「值域合不合法」无关：
+
+- 每个后端实现 `ICodecBackend::encodeCapabilities()`（默认全 `false`，新后端不实现即被拒绝）；
+- 路由层用 `Router::checkEncodeParams()` 在**真正编码之前**判定，缺项时返回
+  `UnsupportedFormat` 且 `message` 点名具体项（`encode params not supported: progressive`）；
+- `Router::encodeCapabilities()` 取**并集**：自动模式下会跳过不支持的后端，只要顺序里有一个
+  能做，请求就成立。取交集会让「CPU 支持、GPU 不支持」的常用组合在 UI 上被误判成不支持；
+- `image_codec_offload_encode_capabilities()` 是同一张表的 C API 出口：自动句柄给并集，
+  `create_forced` 句柄给该后端自己的表。
+
+**GPU 后端目前不声明任何进阶参数**（能力表默认全 0，只有 CPU 实现期间才置 1）。
+基础参数（JPEG 的 quality/subsampling、TIFF 的 none/LZW/strip-tiled、PNG 的
+compression/filter）不在能力表里——它们是三个后端一直就有的共同底线。进阶参数一律由
+CPU 表达，GPU lane 会被能力表挡掉而不是「照收但忽略」——这是刻意的：静默丢参数会产出
+「文件能打开、看着也正常，只有该有的 SOF2/Predictor/DPI 没了」的产物。
 
 ## 构建
 

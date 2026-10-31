@@ -81,20 +81,60 @@ typedef struct ico_image {
 } ico_image;
 
 // 编码参数。字段按目标格式选用，未用到的字段忽略（保持 0 即用默认值）。
+//
+// 「未填」的约定统一是 **0 或负数**，因为 0 在多数参数里是一个合法取值
+// （质量不能是 0，但 rows_per_strip=0、filter=0、predictor=0 都要能表达）。
+// 具体见每个字段的注释。
 typedef struct ico_encode_params {
   // JPEG
   int jpeg_quality;     // 1..100，0 = 默认 90
   int jpeg_subsampling; // 0 = 默认(420)，444/422/420
+  int jpeg_progressive;      // 0 = baseline(SOF0)；1 = 渐进式(SOF2)
+  int jpeg_optimize_huffman; // 0 = 一遍扫描；1 = 两遍，优化霍夫曼表
+  int jpeg_restart_interval; // 0 = 不插 RST；>0 = 每 N 个 MCU 一个 RST
+  int jpeg_luma_quality;     // 0 = 跟随 jpeg_quality；1..100 = 单独指定
+  int jpeg_chroma_quality;   // 0 = 跟随 jpeg_quality；1..100 = 单独指定
 
   // TIFF
-  int tiff_compression;    // 0 = 默认 LZW，1 = none，5 = LZW，8 = deflate
-  int tiff_rows_per_strip; // 0 = 自动
+  int tiff_compression;    // 0 = 默认 LZW；1 none / 5 LZW / 7 JPEG /
+                           // 8 AdobeDeflate / 32773 PackBits
+  int tiff_rows_per_strip; // 0 = 整幅图一条 strip（与 libtiff 写 scanline 的
+                           // 默认结果一致）；>0 = 显式行数
   int tiff_tile_size;      // 0 = strip 布局；>0 = tiled（16 的倍数）
+  // -1 或 0 = **不写 Predictor 标签**（默认）。1 = none、2 = horizontal、
+  // 3 = floating point。注意「不写」与「写 1」像素等价，但后者会多一个
+  // IFD 条目（12 字节），逐字节对拍时会看成差异。
+  int tiff_predictor;
+  int tiff_x_dpi;           // 0 = 不写分辨率标签
+  int tiff_y_dpi;           // 0 = 不写（x 给了、y 没给时 y 跟随 x）
+  int tiff_resolution_unit; // 0 = 有 DPI 时按英寸；2 = 英寸；3 = 厘米
+  int tiff_jpeg_quality;    // 0 = 跟随 jpeg_quality；1..100（仅压缩=7）
 
   // PNG
-  int png_compression; // 0..9，-1 = 默认 6
-  int png_filter;      // -1 = 自适应，0..4 = 固定滤波器
+  // **这两个字段的「未指定」是 -1，不是 0**：zlib 等级 0 与「不滤波」都是
+  // 合法取值，用 0 表示未指定会让它们永远表达不出来（曾经就是这样）。
+  int png_compression; // -1 = 默认 6；0..9 = 显式等级
+  int png_filter;      // -1 = 自适应；0 None / 1 Sub / 2 Up / 3 Avg / 4 Paeth
+  int png_strategy;    // 0 = 未指定（zlib 默认）；1 filtered / 2 huffman /
+                       // 3 rle / 4 fixed
 } ico_encode_params;
+
+// 某个句柄**能表达**哪些编码参数。字段是「有没有实现」而不是「值域」。
+//
+// 为什么需要它：一条存图 lane 绑死一个后端，调用方必须在派发前知道这组
+// 参数在这个后端上会不会被丢掉。没有这张表就只能「编一张试试」，而失败
+// 发生在文件写出来之前、大图上还白跑一遍。0 = 不支持，非 0 = 支持。
+typedef struct ico_encode_capabilities {
+  int jpeg_progressive;
+  int jpeg_optimize_huffman;
+  int jpeg_restart_interval;
+  int jpeg_luma_chroma_quality;
+  int tiff_predictor;
+  int tiff_resolution;
+  int tiff_packbits;
+  int tiff_jpeg_compression;
+  int png_strategy;
+} ico_encode_capabilities;
 
 // SSIM 与 MS-SSIM 的结果：两者共享第 0 级统计，由一次调用一起给出。
 typedef struct ico_ssim {
@@ -152,6 +192,12 @@ ICO_API ico_status image_codec_offload_last_outcome(ico_codec *codec,
                                                     int *used_backend,
                                                     char *detail,
                                                     size_t detail_capacity);
+
+// 这个句柄当前能表达的编码参数（见 ico_encode_capabilities）。
+// 自动模式下是**各后端的并集**：某个后端不支持时路由层会换下一个，
+// 只要顺序里有一个能做，请求就能成立。强制后端时就是该后端自己的表。
+ICO_API ico_status image_codec_offload_encode_capabilities(
+    ico_codec *codec, ico_encode_capabilities *out);
 
 // 按魔数探测容器格式（不看扩展名）。无法识别时 *out_format = UNKNOWN 且返回 OK。
 ICO_API ico_status image_codec_offload_probe(const void *data, size_t size,

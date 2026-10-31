@@ -37,6 +37,10 @@ public:
   virtual Result<std::vector<uint8_t>> encode(Format format, const Image &image,
                                               const EncodeParams &params) = 0;
 
+  // 这个后端能表达哪些编码参数（见 EncodeCapabilities）。默认「什么都不
+  // 保证」——新后端不实现它时，路由层会拒绝进阶参数而不是悄悄忽略。
+  virtual EncodeCapabilities encodeCapabilities() const { return {}; }
+
   virtual Result<Image> decode(Format format, const uint8_t *data,
                                size_t size) = 0;
 

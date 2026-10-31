@@ -129,9 +129,13 @@ int compressionTag(int value) {
     return COMPRESSION_NONE;
   case 5:
     return COMPRESSION_LZW;
+  case 7:
+    return COMPRESSION_JPEG;
   case 8:
   case 9:
     return COMPRESSION_ADOBE_DEFLATE;
+  case 32773:
+    return COMPRESSION_PACKBITS;
   default:
     return COMPRESSION_LZW;
   }
@@ -313,8 +317,38 @@ Result<std::vector<uint8_t>> encodeTiff(const Image &image,
                compressionTag(params.tiff_compression));
   TIFFSetField(tif.get(), TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
 
-  if (params.tiff_compression == 5) {
-    TIFFSetField(tif.get(), TIFFTAG_PREDICTOR, 1);
+  // Predictor 只在**明确要求**时才写标签。
+  //
+  // 这里曾经无条件写 TIFFTAG_PREDICTOR=1（PREDICTOR_NONE），理由是「LZW 的
+  // 规范配套」。值为 1 的标签虽然像素语义等于「不预测」，却会多出一个 12
+  // 字节的 IFD 条目——于是同一张图、同一组参数，走 libtiff 的旧写法和走本库
+  // 就差 12 字节，「逐字节一致」这一条永远不成立。默认不写，才是最中性的
+  // 行为；要显式声明 Predictor=NONE 的调用方可以传 1。
+  if (params.tiff_predictor > 0) {
+    TIFFSetField(tif.get(), TIFFTAG_PREDICTOR,
+                 static_cast<uint16_t>(params.tiff_predictor));
+  }
+
+  // 分辨率：只有给了 DPI 才写。ResolutionUnit 缺省时按英寸（TIFF 6.0 §8 的
+  // 默认解释），显式给 3 才写厘米。写 XResolution 却不写单位，是最常见的
+  // 「文件能打开但尺寸标注错」的来源。
+  if (params.tiff_x_dpi > 0 || params.tiff_y_dpi > 0) {
+    const int x_dpi = params.tiff_x_dpi > 0 ? params.tiff_x_dpi : 72;
+    const int y_dpi = params.tiff_y_dpi > 0 ? params.tiff_y_dpi : x_dpi;
+    TIFFSetField(tif.get(), TIFFTAG_XRESOLUTION, static_cast<float>(x_dpi));
+    TIFFSetField(tif.get(), TIFFTAG_YRESOLUTION, static_cast<float>(y_dpi));
+    const uint16_t unit =
+        params.tiff_resolution_unit == 3 ? RESUNIT_CENTIMETER : RESUNIT_INCH;
+    TIFFSetField(tif.get(), TIFFTAG_RESOLUTIONUNIT, unit);
+  }
+
+  // JPEG 压缩的质量只在 compression=7 时才有意义；libtiff 的 JPEG 编解码
+  // 通过 JPEGQUALITY 取值（1..100）。
+  if (params.tiff_compression == 7) {
+    const int quality = params.tiff_jpeg_quality >= 0 ? params.tiff_jpeg_quality
+                                                      : params.jpeg_quality;
+    TIFFSetField(tif.get(), TIFFTAG_JPEGQUALITY,
+                 quality < 1 ? 1 : (quality > 100 ? 100 : quality));
   }
 
   const int tile = params.tiff_tile_size;

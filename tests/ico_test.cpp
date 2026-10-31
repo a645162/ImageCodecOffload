@@ -25,6 +25,7 @@ using image_codec::offload::Format;
 using image_codec::offload::Image;
 using image_codec::offload::Router;
 using image_codec::offload::SsimResult;
+using image_codec::offload::Status;
 
 namespace {
 
@@ -446,8 +447,7 @@ void testJpegSubsampling() {
   grad.pixels.resize(static_cast<size_t>(grad.width) * grad.height * 3);
   for (int y = 0; y < grad.height; ++y) {
     for (int x = 0; x < grad.width; ++x) {
-      uint8_t *p =
-          &grad.pixels[(static_cast<size_t>(y) * grad.width + x) * 3];
+      uint8_t *p = &grad.pixels[(static_cast<size_t>(y) * grad.width + x) * 3];
       p[0] = static_cast<uint8_t>((x * 4) & 0xFF);
       p[1] = static_cast<uint8_t>((y * 6) & 0xFF);
       p[2] = static_cast<uint8_t>(((x + y) * 2) & 0xFF);
@@ -757,6 +757,509 @@ void testForcedBackendApi() {
   }
 }
 
+// ---- 8. 进阶编码参数（P4） ----
+//
+// 这一组检查的不是「参数能传进去」，而是「参数真的落进了码流/容器」。传进去
+// 却被后端丢掉是最坏的一类缺陷：文件能打开、像素看着也正常，只有该有的标记
+// （SOF2 / Predictor / DPI）悄悄没了。
+
+uint32_t readLe16(const std::vector<uint8_t> &bytes, size_t at) {
+  return static_cast<uint32_t>(bytes[at]) |
+         (static_cast<uint32_t>(bytes[at + 1]) << 8);
+}
+
+uint32_t readLe32(const std::vector<uint8_t> &bytes, size_t at) {
+  return static_cast<uint32_t>(bytes[at]) |
+         (static_cast<uint32_t>(bytes[at + 1]) << 8) |
+         (static_cast<uint32_t>(bytes[at + 2]) << 16) |
+         (static_cast<uint32_t>(bytes[at + 3]) << 24);
+}
+
+// JPEG 段标记扫描：0xFF 后跟 marker。熵编码数据里的 0xFF 一定被填成 0xFF00，
+// 所以除了 RSTn 之外不会误命中。
+bool hasJpegMarker(const std::vector<uint8_t> &bytes, uint8_t marker) {
+  for (size_t i = 0; i + 1 < bytes.size(); ++i) {
+    if (bytes[i] == 0xFF && bytes[i + 1] == marker) return true;
+  }
+  return false;
+}
+
+// RST0..RST7（0xD0..0xD7）的个数。
+int countJpegRestarts(const std::vector<uint8_t> &bytes) {
+  int count = 0;
+  for (size_t i = 0; i + 1 < bytes.size(); ++i) {
+    if (bytes[i] == 0xFF && bytes[i + 1] >= 0xD0 && bytes[i + 1] <= 0xD7) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+// 在**经典小端** TIFF 的 IFD0 里找标签。本库的写出路径固定产出这种布局，
+// 因此这里不需要通用解析器——只要回答「标签在不在、值字段是多少」。
+bool tiffFindTag(const std::vector<uint8_t> &bytes, uint16_t wanted,
+                 uint32_t *value_field) {
+  if (bytes.size() < 8) return false;
+  if (bytes[0] != 'I' || bytes[1] != 'I' || bytes[2] != 42 || bytes[3] != 0) {
+    return false;
+  }
+  const uint32_t ifd = readLe32(bytes, 4);
+  if (static_cast<size_t>(ifd) + 2 > bytes.size()) return false;
+  const uint32_t count = readLe16(bytes, ifd);
+  for (uint32_t i = 0; i < count; ++i) {
+    const size_t entry = ifd + 2 + static_cast<size_t>(i) * 12;
+    if (entry + 12 > bytes.size()) return false;
+    if (readLe16(bytes, entry) != wanted) continue;
+    if (value_field != nullptr) *value_field = readLe32(bytes, entry + 8);
+    return true;
+  }
+  return false;
+}
+
+// XResolution / YResolution 是 RATIONAL（count=1），值字段存的是「分子/分母
+// 在文件中的偏移」。
+bool tiffRational(const std::vector<uint8_t> &bytes, uint16_t tag,
+                  double *out) {
+  uint32_t offset = 0;
+  if (!tiffFindTag(bytes, tag, &offset)) return false;
+  if (static_cast<size_t>(offset) + 8 > bytes.size()) return false;
+  const uint32_t numerator = readLe32(bytes, offset);
+  const uint32_t denominator = readLe32(bytes, offset + 4);
+  if (denominator == 0) return false;
+  *out = static_cast<double>(numerator) / static_cast<double>(denominator);
+  return true;
+}
+
+std::vector<uint8_t> encodeCpu(Router &router, Format format,
+                               const Image &image, const EncodeParams &params) {
+  auto bytes = router.encodeWith(BackendKind::Cpu, format, image, params);
+  if (!bytes) {
+    std::printf("cpu encode %s failed: %s\n", formatName(format),
+                bytes.error().message.c_str());
+    return {};
+  }
+  return std::move(*bytes);
+}
+
+std::vector<uint8_t> decodeCpu(Router &router, Format format,
+                               const std::vector<uint8_t> &bytes) {
+  auto image =
+      router.decodeWith(BackendKind::Cpu, format, bytes.data(), bytes.size());
+  if (!image) return {};
+  return image->pixels;
+}
+
+void testJpegAdvancedParams() {
+  Router router;
+  const Image src = makeImage(97, 65, 3); // 不是 MCU 的整数倍
+
+  EncodeParams base;
+  base.jpeg_quality = 90;
+  base.jpeg_subsampling = 444;
+  const auto baseline = encodeCpu(router, Format::Jpeg, src, base);
+  check(!baseline.empty(), "jpeg baseline encode");
+  check(hasJpegMarker(baseline, 0xC0), "baseline writes SOF0");
+  check(!hasJpegMarker(baseline, 0xC2), "baseline is not progressive");
+  check(countJpegRestarts(baseline) == 0, "baseline writes no RSTn");
+  const auto baseline_pixels = decodeCpu(router, Format::Jpeg, baseline);
+  check(!baseline_pixels.empty(), "baseline decodes");
+
+  // 渐进式：必须是 SOF2，且仍能解回来。
+  EncodeParams progressive = base;
+  progressive.jpeg_progressive = true;
+  const auto progressive_bytes =
+      encodeCpu(router, Format::Jpeg, src, progressive);
+  check(!progressive_bytes.empty(), "jpeg progressive encode");
+  check(hasJpegMarker(progressive_bytes, 0xC2), "progressive writes SOF2");
+  check(!hasJpegMarker(progressive_bytes, 0xC0), "progressive has no SOF0");
+  check(progressive_bytes != baseline, "progressive changes the stream");
+  const auto progressive_pixels =
+      decodeCpu(router, Format::Jpeg, progressive_bytes);
+  check(progressive_pixels.size() == baseline_pixels.size(),
+        "progressive decodes to the same geometry");
+
+  // 优化霍夫曼：只换熵表，量化表没动 → 解码像素必须与 baseline **完全一致**。
+  EncodeParams optimized = base;
+  optimized.jpeg_optimize_huffman = true;
+  const auto optimized_bytes = encodeCpu(router, Format::Jpeg, src, optimized);
+  check(!optimized_bytes.empty(), "jpeg optimize-huffman encode");
+  check(optimized_bytes.size() < baseline.size(),
+        "optimize-huffman shrinks the stream");
+  check(decodeCpu(router, Format::Jpeg, optimized_bytes) == baseline_pixels,
+        "optimize-huffman must not change decoded pixels");
+
+  // RST 间隔：码流里真的出现 RSTn；像素同样不变。
+  EncodeParams restarted = base;
+  restarted.jpeg_restart_interval = 2;
+  const auto restarted_bytes = encodeCpu(router, Format::Jpeg, src, restarted);
+  check(!restarted_bytes.empty(), "jpeg restart-interval encode");
+  check(countJpegRestarts(restarted_bytes) > 0, "restart-interval writes RSTn");
+  check(decodeCpu(router, Format::Jpeg, restarted_bytes) == baseline_pixels,
+        "restart-interval must not change decoded pixels");
+
+  // 亮度/色度分开：量化表不同 → 码流不同（same quality 的等价性上面已由
+  // baseline 覆盖，这里只验证「真的生效」）。
+  EncodeParams split = base;
+  split.jpeg_luma_quality = 30;
+  split.jpeg_chroma_quality = 95;
+  const auto split_bytes = encodeCpu(router, Format::Jpeg, src, split);
+  check(!split_bytes.empty(), "jpeg luma/chroma quality encode");
+  check(split_bytes != baseline, "luma/chroma quality changes the stream");
+
+  // 灰度图只有亮度表：色度质量必须**完全无效**，亮度质量必须生效。
+  // 这一条防的是「把 chroma 质量误写进标 0」这类错位。
+  const Image gray = makeImage(64, 64, 1);
+  const auto gray_base = encodeCpu(router, Format::Jpeg, gray, base);
+  check(!gray_base.empty(), "gray jpeg encode");
+  EncodeParams gray_chroma = base;
+  gray_chroma.jpeg_chroma_quality = 20;
+  check(encodeCpu(router, Format::Jpeg, gray, gray_chroma) == gray_base,
+        "gray jpeg ignores chroma quality");
+  EncodeParams gray_luma = base;
+  gray_luma.jpeg_luma_quality = 20;
+  check(encodeCpu(router, Format::Jpeg, gray, gray_luma) != gray_base,
+        "gray jpeg honors luma quality");
+}
+
+void testTiffAdvancedParams() {
+  Router router;
+  const Image src = makeImage(97, 65, 3);
+
+  EncodeParams base;
+  base.tiff_compression = 5; // LZW
+  const auto plain = encodeCpu(router, Format::Tiff, src, base);
+  check(!plain.empty(), "tiff lzw encode");
+
+  // 默认必须**不写** Predictor / 分辨率标签：这是「与旧写盘路径逐字节一致」
+  // 的前提（多一个 12 字节的 IFD 条目就会让对拍失败）。
+  check(!tiffFindTag(plain, 317, nullptr), "default writes no Predictor tag");
+  check(!tiffFindTag(plain, 282, nullptr), "default writes no XResolution");
+  check(!tiffFindTag(plain, 283, nullptr), "default writes no YResolution");
+  check(!tiffFindTag(plain, 296, nullptr), "default writes no ResolutionUnit");
+
+  // Predictor=2：标签写进去，LZW 前向差分本身无损。
+  EncodeParams predicted = base;
+  predicted.tiff_predictor = 2;
+  const auto predicted_bytes = encodeCpu(router, Format::Tiff, src, predicted);
+  uint32_t value = 0;
+  check(tiffFindTag(predicted_bytes, 317, &value) && value == 2,
+        "predictor=2 written to IFD");
+  check(predicted_bytes != plain, "predictor changes the payload");
+  check(decodeCpu(router, Format::Tiff, predicted_bytes) == src.pixels,
+        "predictor stays lossless");
+
+  // 显式 Predictor=1（none）与「不写」像素等价，但必然多恰好一个 IFD 条目。
+  EncodeParams explicit_none = base;
+  explicit_none.tiff_predictor = 1;
+  const auto explicit_none_bytes =
+      encodeCpu(router, Format::Tiff, src, explicit_none);
+  check(tiffFindTag(explicit_none_bytes, 317, &value) && value == 1,
+        "predictor=1 written when explicitly asked");
+  check(explicit_none_bytes.size() == plain.size() + 12,
+        "explicit predictor=none adds exactly one IFD entry");
+  check(decodeCpu(router, Format::Tiff, explicit_none_bytes) == src.pixels,
+        "explicit predictor=none stays lossless");
+
+  // 分辨率：给了才写；y 缺省跟随 x；单位默认英寸、可显式厘米。
+  EncodeParams resolved = base;
+  resolved.tiff_x_dpi = 300;
+  resolved.tiff_y_dpi = 150;
+  resolved.tiff_resolution_unit = 3;
+  const auto resolved_bytes = encodeCpu(router, Format::Tiff, src, resolved);
+  double x_dpi = 0.0;
+  double y_dpi = 0.0;
+  check(tiffRational(resolved_bytes, 282, &x_dpi) && x_dpi == 300.0,
+        "x dpi = 300");
+  check(tiffRational(resolved_bytes, 283, &y_dpi) && y_dpi == 150.0,
+        "y dpi = 150");
+  check(tiffFindTag(resolved_bytes, 296, &value) && value == 3,
+        "resolution unit = centimeter");
+
+  EncodeParams x_only = base;
+  x_only.tiff_x_dpi = 300;
+  const auto x_only_bytes = encodeCpu(router, Format::Tiff, src, x_only);
+  check(tiffRational(x_only_bytes, 283, &y_dpi) && y_dpi == 300.0,
+        "y dpi follows x when unset");
+  check(tiffFindTag(x_only_bytes, 296, &value) && value == 2,
+        "default resolution unit is inch");
+
+  // PackBits：容器里的 Compression 标签必须是 32773，且必须能解回来。
+  EncodeParams packbits = base;
+  packbits.tiff_compression = 32773;
+  const auto packbits_bytes = encodeCpu(router, Format::Tiff, src, packbits);
+  check(!packbits_bytes.empty(), "packbits encode");
+  check(tiffFindTag(packbits_bytes, 259, &value) && value == 32773,
+        "compression tag = packbits");
+  check(decodeCpu(router, Format::Tiff, packbits_bytes) == src.pixels,
+        "packbits stays lossless");
+
+  // TIFF 的 JPEG 压缩：libtiff 是否编入了 jpeg codec 是构建期事实。
+  // 能写就必须写对；不能写就必须**明确失败**，绝不悄悄退化成 LZW。
+  if (router.encodeCapabilities().tiff_jpeg_compression) {
+    EncodeParams jpeg = base;
+    jpeg.tiff_compression = 7;
+    jpeg.tiff_jpeg_quality = 92;
+    const auto jpeg_bytes = encodeCpu(router, Format::Tiff, src, jpeg);
+    check(!jpeg_bytes.empty(), "tiff jpeg encode");
+    check(tiffFindTag(jpeg_bytes, 259, &value) && value == 7,
+          "compression tag = jpeg");
+    const auto decoded = router.decodeWith(
+        BackendKind::Cpu, Format::Tiff, jpeg_bytes.data(), jpeg_bytes.size());
+    check(static_cast<bool>(decoded), "tiff jpeg decodes");
+    if (decoded) {
+      const auto quality = router.psnr(src, *decoded);
+      check(quality && *quality > 25.0, "tiff jpeg quality is sane");
+    }
+  } else {
+    EncodeParams jpeg = base;
+    jpeg.tiff_compression = 7;
+    const auto rejected =
+        router.encodeWith(BackendKind::Cpu, Format::Tiff, src, jpeg);
+    check(!rejected, "tiff jpeg rejected when libtiff has no jpeg codec");
+  }
+}
+
+void testPngAdvancedParams() {
+  Router router;
+  const Image src = makeImage(97, 65, 3);
+
+  EncodeParams base;
+  base.png_compression = 6;
+  const auto plain = encodeCpu(router, Format::Png, src, base);
+  check(!plain.empty(), "png default encode");
+  check(decodeCpu(router, Format::Png, plain) == src.pixels,
+        "png default stays lossless");
+
+  // 五种 zlib 策略都必须产出**无损**的合法 PNG。策略只影响压缩路径，
+  // 任何一条丢字节的实现都会在这一步暴露。
+  for (int strategy : {0, 1, 2, 3, 4}) {
+    EncodeParams params = base;
+    params.png_strategy = strategy;
+    const auto bytes = encodeCpu(router, Format::Png, src, params);
+    check(!bytes.empty(), "png strategy encode");
+    if (bytes.empty()) continue;
+    check(decodeCpu(router, Format::Png, bytes) == src.pixels,
+          "png strategy stays lossless");
+  }
+
+  // huffman-only 完全不找 LZ 匹配，在有噪声的图上必然与默认策略不同。
+  EncodeParams huffman = base;
+  huffman.png_strategy = 2;
+  check(encodeCpu(router, Format::Png, src, huffman) != plain,
+        "png huffman-only differs from the default strategy");
+}
+
+// 能力表与实现的**双向**契约：
+//   * 实现拒绝 → 能力表也必须拒绝，且原因里必须点名是哪一项；
+//   * 实现接受 → 能力表也必须承认（否则 UI 会把可用组合灰掉）。
+void testCapabilityContract() {
+  Router router;
+  const Image src = makeImage(64, 48, 3);
+
+  struct Probe {
+    Format format;
+    EncodeParams params;
+    const char *item;
+  };
+  std::vector<Probe> probes;
+  {
+    EncodeParams params;
+    params.jpeg_progressive = true;
+    probes.push_back({Format::Jpeg, params, "progressive"});
+  }
+  {
+    EncodeParams params;
+    params.jpeg_optimize_huffman = true;
+    probes.push_back({Format::Jpeg, params, "optimize-huffman"});
+  }
+  {
+    EncodeParams params;
+    params.jpeg_restart_interval = 2;
+    probes.push_back({Format::Jpeg, params, "restart-interval"});
+  }
+  {
+    EncodeParams params;
+    params.jpeg_luma_quality = 70;
+    probes.push_back({Format::Jpeg, params, "luma/chroma-quality"});
+  }
+  {
+    EncodeParams params;
+    params.tiff_predictor = 2;
+    probes.push_back({Format::Tiff, params, "predictor"});
+  }
+  {
+    EncodeParams params;
+    params.tiff_x_dpi = 300;
+    probes.push_back({Format::Tiff, params, "resolution"});
+  }
+  {
+    EncodeParams params;
+    params.tiff_compression = 32773;
+    probes.push_back({Format::Tiff, params, "packbits"});
+  }
+  {
+    EncodeParams params;
+    params.png_strategy = 3;
+    probes.push_back({Format::Png, params, "strategy"});
+  }
+
+  // 自动模式取并集：CPU 永远在最后兜底，所以这组参数必须全部「可表达」。
+  const auto union_caps = router.encodeCapabilities();
+  check(union_caps.jpeg_progressive && union_caps.jpeg_optimize_huffman &&
+            union_caps.jpeg_restart_interval &&
+            union_caps.jpeg_luma_chroma_quality && union_caps.tiff_predictor &&
+            union_caps.tiff_resolution && union_caps.tiff_packbits &&
+            union_caps.png_strategy,
+        "auto mode can express every advanced param (cpu is the backstop)");
+
+  int rejections = 0;
+  for (BackendKind kind :
+       {BackendKind::OpenCl, BackendKind::Cuda, BackendKind::Vulkan}) {
+    for (const Probe &probe : probes) {
+      const auto verdict =
+          router.checkEncodeParams(kind, probe.format, probe.params);
+      const auto encoded =
+          router.encodeWith(kind, probe.format, src, probe.params);
+
+      if (encoded) {
+        check(static_cast<bool>(verdict),
+              "backend that accepts must also declare the capability");
+        continue;
+      }
+      // 没编进本构建 / 本机没设备：与能力无关，跳过。
+      if (encoded.error().code == Status::BackendUnavailable) continue;
+      if (encoded.error().code != Status::UnsupportedFormat) continue;
+
+      ++rejections;
+      check(!verdict, "a rejected request must fail the capability check too");
+      if (!verdict && verdict.error().message.find(
+                          "encode params not supported") != std::string::npos) {
+        check(verdict.error().message.find(probe.item) != std::string::npos,
+              "capability rejection names the missing parameter");
+      }
+    }
+  }
+  std::printf("advanced params rejected by gpu backends: %d\n", rejections);
+}
+
+// C API 的同一组参数：既要**真的落进码流**，又要保证「清零结构体」等于
+// 「内部默认值」——老调用方不写新字段时，产物必须与升级前逐字节相同。
+void testCapiAdvancedParams() {
+  const Image src = makeImage(64, 48, 3);
+
+  ico_image image{};
+  image.width = static_cast<uint32_t>(src.width);
+  image.height = static_cast<uint32_t>(src.height);
+  image.channels = static_cast<uint32_t>(src.channels);
+  image.stride = static_cast<uint32_t>(src.rowBytes());
+  image.data_size = src.pixels.size();
+  image.data = const_cast<uint8_t *>(src.pixels.data());
+
+  ico_codec *cpu = nullptr;
+  check(image_codec_offload_create_forced(&cpu, ICO_BACKEND_CPU) == ICO_OK,
+        "create_forced(cpu)");
+  if (cpu == nullptr) return;
+
+  ico_encode_capabilities caps{};
+  check(image_codec_offload_encode_capabilities(cpu, &caps) == ICO_OK,
+        "encode_capabilities(cpu)");
+  check(caps.jpeg_progressive == 1 && caps.jpeg_optimize_huffman == 1 &&
+            caps.jpeg_restart_interval == 1 &&
+            caps.jpeg_luma_chroma_quality == 1 && caps.tiff_predictor == 1 &&
+            caps.tiff_resolution == 1 && caps.tiff_packbits == 1 &&
+            caps.png_strategy == 1,
+        "cpu declares every advanced param");
+  check(image_codec_offload_encode_capabilities(cpu, nullptr) ==
+            ICO_ERR_INVALID_ARGUMENT,
+        "encode_capabilities rejects null out");
+  check(image_codec_offload_encode_capabilities(nullptr, &caps) ==
+            ICO_ERR_INVALID_ARGUMENT,
+        "encode_capabilities rejects null codec");
+
+  const auto encode = [&](int ico_format, const ico_encode_params &params) {
+    std::vector<uint8_t> out(src.pixels.size() * 4);
+    size_t out_len = out.size();
+    const ico_status status = image_codec_offload_encode(
+        cpu, ico_format, &image, &params, out.data(), &out_len, out.size());
+    if (status != ICO_OK) {
+      std::printf("c api encode(format=%d) failed: %s\n", ico_format,
+                  image_codec_offload_status_string(status));
+      return std::vector<uint8_t>{};
+    }
+    out.resize(out_len);
+    return out;
+  };
+
+  // 清零结构体 == 内部默认值：JPEG / TIFF 成立（这些字段里 0 不是合法取值）。
+  Router router;
+  const std::pair<int, Format> zeroed_formats[] = {
+      {ICO_FORMAT_JPEG, Format::Jpeg},
+      {ICO_FORMAT_TIFF, Format::Tiff},
+  };
+  for (const auto &[ico_format, format] : zeroed_formats) {
+    ico_encode_params zeroed{};
+    const auto via_c = encode(ico_format, zeroed);
+    const auto via_cpp =
+        router.encodeWith(BackendKind::Cpu, format, src, EncodeParams{});
+    check(!via_c.empty(), "c api encode with zeroed params");
+    check(via_cpp && via_c == *via_cpp,
+          "zeroed c params must equal internal defaults");
+  }
+
+  // PNG 刻意不对称：等级 0 与「不滤波」都是合法取值，所以「未指定」是 -1。
+  ico_encode_params png_defaults{};
+  png_defaults.png_compression = -1;
+  png_defaults.png_filter = -1;
+  const auto png_via_c = encode(ICO_FORMAT_PNG, png_defaults);
+  const auto png_via_cpp = router.encodeWith(BackendKind::Cpu, Format::Png,
+                                             src, EncodeParams{});
+  check(!png_via_c.empty(), "c api png encode with explicit -1 defaults");
+  check(png_via_cpp && png_via_c == *png_via_cpp,
+        "explicit -1 must equal internal png defaults");
+
+  // 清零结构体（= 等级 0 + 不滤波）必须**真的生效**，而且仍然无损。
+  // 这一条防的是「0 被当成未指定」的旧缺陷：两个合法取值永远传不进去。
+  ico_encode_params png_literal{};
+  const auto png_literal_bytes = encode(ICO_FORMAT_PNG, png_literal);
+  check(!png_literal_bytes.empty(), "c api png level 0 / filter none encode");
+  check(png_literal_bytes != png_via_c,
+        "png level 0 + filter none really applies");
+  {
+    const auto decoded = router.decodeWith(BackendKind::Cpu, Format::Png,
+                                           png_literal_bytes.data(),
+                                           png_literal_bytes.size());
+    check(static_cast<bool>(decoded) && decoded->pixels == src.pixels,
+          "png level 0 stays lossless");
+  }
+
+  ico_encode_params jpeg{};
+  jpeg.jpeg_progressive = 1;
+  jpeg.jpeg_optimize_huffman = 1;
+  jpeg.jpeg_restart_interval = 2;
+  const auto jpeg_bytes = encode(ICO_FORMAT_JPEG, jpeg);
+  check(hasJpegMarker(jpeg_bytes, 0xC2), "c api progressive reaches SOF2");
+  check(countJpegRestarts(jpeg_bytes) > 0,
+        "c api restart interval reaches RSTn");
+
+  ico_encode_params tiff{};
+  tiff.tiff_predictor = 2;
+  tiff.tiff_x_dpi = 600;
+  tiff.tiff_resolution_unit = 2;
+  const auto tiff_bytes = encode(ICO_FORMAT_TIFF, tiff);
+  uint32_t value = 0;
+  double dpi = 0.0;
+  check(tiffFindTag(tiff_bytes, 317, &value) && value == 2,
+        "c api predictor reaches the tag");
+  check(tiffRational(tiff_bytes, 282, &dpi) && dpi == 600.0,
+        "c api dpi reaches the tag");
+
+  ico_encode_params png{};
+  png.png_strategy = 2;
+  check(!encode(ICO_FORMAT_PNG, png).empty(), "c api png strategy encode");
+
+  image_codec_offload_destroy(cpu);
+}
+
 } // namespace
 
 int main() {
@@ -773,6 +1276,11 @@ int main() {
   testGrayChannelFidelity();
   testFallbackLeavesReason();
   testForcedBackendApi();
+  testJpegAdvancedParams();
+  testTiffAdvancedParams();
+  testPngAdvancedParams();
+  testCapabilityContract();
+  testCapiAdvancedParams();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "%d check(s) failed\n", g_failures);

@@ -5,6 +5,11 @@
 // 之后把 png_struct/png_info 销毁干净——否则一次坏输入就会漏一块结构。
 #include "png_io.h"
 
+// zlib 的压缩策略常量（Z_*_STRATEGY）只由 zlib.h 提供。libpng 在部分配置下
+// 不把 zlib.h 带进来（它自己的 PNG_Z_* 宏只在 pnglibconf 里），所以这里显式
+// 包含，而不是依赖 png.h 的传递包含。
+#include <zlib.h>
+
 #include <png.h>
 
 #include <csetjmp>
@@ -45,6 +50,26 @@ int filterMask(int filter) {
     return PNG_FILTER_PAETH;
   default:
     return PNG_ALL_FILTERS; // -1 = 自适应
+  }
+}
+
+// zlib 的压缩策略。它不是「压缩级别」的同义词：级别决定多努力找匹配，
+// 策略决定「允许用哪类匹配」。RLE 与 Huffman-only 在特定内容上明显更快/更小，
+// 但也可能完全压不动，所以只能由调用方显式选。
+int strategyValue(int strategy) {
+  switch (strategy) {
+  case 0:
+    return Z_DEFAULT_STRATEGY;
+  case 1:
+    return Z_FILTERED;
+  case 2:
+    return Z_HUFFMAN_ONLY;
+  case 3:
+    return Z_RLE;
+  case 4:
+    return Z_FIXED;
+  default:
+    return Z_DEFAULT_STRATEGY;
   }
 }
 
@@ -102,6 +127,11 @@ Result<std::vector<uint8_t>> encodePng(const Image &image,
                ? 6
                : (params.png_compression > 9 ? 9 : params.png_compression));
   png_set_filter(png, 0, filterMask(params.png_filter));
+  // -1 = 不干预（libpng 默认即 Z_DEFAULT_STRATEGY）。0 也是默认策略，
+  // 所以显式给 0 与不写等价——这一点在 C API 注释里已写明。
+  if (params.png_strategy >= 0) {
+    png_set_compression_strategy(png, strategyValue(params.png_strategy));
+  }
 
   png_write_info(png, info);
 

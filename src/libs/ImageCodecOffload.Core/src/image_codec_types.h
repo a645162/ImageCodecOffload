@@ -105,14 +105,51 @@ struct EncodeParams {
   int jpeg_quality = 90;      // 1..100
   int jpeg_subsampling = 420; // 444 / 422 / 420
 
+  // JPEG 的其余编码控制。默认值刻意都是「关闭 / 跟随质量」：
+  // 老调用方只填 quality + subsampling 时，产物与加入这些字段之前逐字节相同。
+  bool jpeg_progressive = false;      // true = 渐进式（SOF2）
+  bool jpeg_optimize_huffman = false; // true = 两遍扫描优化霍夫曼表
+  int jpeg_restart_interval = 0;      // 0 = 不插 RST；>0 = 每 N 个 MCU
+  int jpeg_luma_quality = -1;   // -1 = 跟随 jpeg_quality；0..100 = 单独指定
+  int jpeg_chroma_quality = -1; // 同上（仅对 3 通道有意义）
+
   // TIFF
-  int tiff_compression = 5;    // 1 = none, 5 = LZW, 8 = deflate
+  int tiff_compression = 5;    // 1 = none, 5 = LZW, 7 = JPEG, 8 = deflate,
+                               // 32773 = PackBits
   int tiff_tile_size = 0;      // 0 = 用 strip；>0 = tiled（边长，通常 256/512）
-  int tiff_rows_per_strip = 0; // tiles=0 时生效；0 = 按显存/内存预算自动
+  int tiff_rows_per_strip = 0; // tiles=0 时生效；0 = 整幅图一条 strip
+  // -1 = **不写 Predictor tag**（默认）。这不是「等于 PREDICTOR_NONE」的
+  // 等价写法：值为 1 的 Predictor 标签也是合法的，但会多出一个 12 字节的
+  // IFD 条目，于是「同参数不同路径」的产物差 12 字节。不写才是最中性的默认。
+  int tiff_predictor = -1;      // 2 = horizontal，3 = floating point
+  int tiff_x_dpi = 0;           // 0 = 不写分辨率标签
+  int tiff_y_dpi = 0;           // 0 = 不写
+  int tiff_resolution_unit = 0; // 0 = 有 DPI 时按英寸(2)；2 = 英寸；3 = 厘米
+  int tiff_jpeg_quality = -1;   // -1 = 跟随 jpeg_quality（仅 compression=7）
 
   // PNG
   int png_compression = 6; // zlib 等级 0..9
   int png_filter = -1;     // -1 = 自适应；0..4 = 固定滤波器
+  int png_strategy = -1;   // -1 = zlib 默认；0 default / 1 filtered / 2 huffman
+                           // / 3 rle / 4 fixed（libpng 的 Z_*_STRATEGY）
+};
+
+// 一个后端**能表达**哪些编码参数。字段不是「值域」而是「这个开关有没有
+// 实现」：例如 JPEG 的 restart_interval 只会问「支持吗」，具体间隔由参数给。
+//
+// 存在的理由：调用方（存图管线的 lane 过滤、UI 灰显）需要在**不做一次真实
+// 编码**的前提下知道「这个后端会不会把我的参数丢掉」。没有这张表，GPU 后端
+// 只能靠「编出来再看」发现问题，而那时文件已经写出来了。
+struct EncodeCapabilities {
+  bool jpeg_progressive = false;
+  bool jpeg_optimize_huffman = false;
+  bool jpeg_restart_interval = false;
+  bool jpeg_luma_chroma_quality = false;
+  bool tiff_predictor = false;
+  bool tiff_resolution = false;
+  bool tiff_packbits = false;
+  bool tiff_jpeg_compression = false;
+  bool png_strategy = false;
 };
 
 // SSIM 与 MS-SSIM 的结果。两者共享第 0 级统计，所以由一次调用一起给出。

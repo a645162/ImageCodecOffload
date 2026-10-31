@@ -54,6 +54,29 @@ void applySubsampling(j_compress_ptr cinfo, int subsampling) {
   }
 }
 
+int clampQuality(int quality) {
+  return quality < 1 ? 1 : (quality > 100 ? 100 : quality);
+}
+
+// 亮度/色度质量分开指定。
+//
+// libjpeg 没有「两张量化表用不同质量」的 API：jpeg_set_quality 一次把标 0
+// 与标 1 都改掉。所以分两次生成，再把亮度表的值抄回来——只碰
+// quant_tbl_ptrs[].quantval 这种公开字段，不依赖 libjpeg 内部符号。
+// 灰度图只有标 0，天然只受亮度质量影响。
+void applyLumaChromaQuality(j_compress_ptr cinfo, int luma_quality,
+                            int chroma_quality) {
+  jpeg_set_quality(cinfo, clampQuality(luma_quality), TRUE);
+  JQUANT_TBL* luma = cinfo->quant_tbl_ptrs[0];
+  if (luma == nullptr) return;
+
+  UINT16 luma_values[DCTSIZE2];
+  std::memcpy(luma_values, luma->quantval, sizeof(luma_values));
+
+  jpeg_set_quality(cinfo, clampQuality(chroma_quality), TRUE);
+  std::memcpy(luma->quantval, luma_values, sizeof(luma_values));
+}
+
 }  // namespace
 
 Result<std::vector<uint8_t>> encodeJpeg(const Image& image,
@@ -96,15 +119,37 @@ Result<std::vector<uint8_t>> encodeJpeg(const Image& image,
   cinfo.in_color_space = image.channels == 1 ? JCS_GRAYSCALE : JCS_RGB;
 
   jpeg_set_defaults(&cinfo);
-  jpeg_set_quality(&cinfo,
-                   params.jpeg_quality < 1
-                       ? 1
-                       : (params.jpeg_quality > 100 ? 100 : params.jpeg_quality),
-                   TRUE);
+  jpeg_set_quality(&cinfo, clampQuality(params.jpeg_quality), TRUE);
+
+  // 亮度/色度分开指定时在基准质量之上覆盖。量化表的生成必须在
+  // jpeg_set_defaults 之后、jpeg_start_compress 之前。
+  if (params.jpeg_luma_quality >= 0 || params.jpeg_chroma_quality >= 0) {
+    const int luma = params.jpeg_luma_quality >= 0 ? params.jpeg_luma_quality
+                                                   : params.jpeg_quality;
+    const int chroma = params.jpeg_chroma_quality >= 0
+                           ? params.jpeg_chroma_quality
+                           : params.jpeg_quality;
+    applyLumaChromaQuality(&cinfo, luma, chroma);
+  }
 
   if (image.channels == 3) {
     // 先 set_defaults 再改采样因子：set_defaults 会把它们重置成 2x2。
     applySubsampling(&cinfo, params.jpeg_subsampling);
+  }
+
+  // 优化霍夫曼表：libjpeg 会先算一遍统计再写，产出的表更小但需要整幅图
+  // 过两遍——大图上这是明确的取舍，所以由参数决定而不是默认打开。
+  cinfo.optimize_coding = params.jpeg_optimize_huffman ? TRUE : FALSE;
+  // RST 间隔只在「码流高度同步」的场景有用（例如逐行恢复）；0 = 不插。
+  if (params.jpeg_restart_interval > 0) {
+    cinfo.restart_interval =
+        static_cast<unsigned int>(params.jpeg_restart_interval);
+  }
+
+  // 渐进式必须在 start_compress 之前安排扫描脚本；它同时隐含
+  // optimize_coding（逐扫描统计霍夫曼表）。
+  if (params.jpeg_progressive) {
+    jpeg_simple_progression(&cinfo);
   }
 
   jpeg_start_compress(&cinfo, TRUE);

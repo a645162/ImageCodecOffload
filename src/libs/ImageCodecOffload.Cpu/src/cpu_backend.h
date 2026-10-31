@@ -24,6 +24,11 @@ class CpuBackend final : public ICodecBackend {
   Result<std::vector<uint8_t>> encode(Format format, const Image& image,
                                       const EncodeParams& params) override;
 
+  // CPU 基线是「参数语义的参照实现」：所有进阶参数都在这里落地，GPU 后端
+  // 逐项跟它对齐（或明确声明做不到）。因此这里恒为全支持——唯一例外是
+  // libtiff 自身没有编入 JPEG 编解码时，TIFF 的 JPEG 压缩做不到。
+  EncodeCapabilities encodeCapabilities() const override;
+
   Result<Image> decode(Format format, const uint8_t* data,
                        size_t size) override;
 

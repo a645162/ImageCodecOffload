@@ -39,6 +39,62 @@ std::string describeFailure(BackendKind kind, const Error &error) {
   return note;
 }
 
+// 这组参数里有哪些是**当前后端没有实现**的。
+//
+// 为什么放在路由层而不是各后端里各写一遍：能力表是后端的唯一声明点
+// （ICodecBackend::encodeCapabilities），参数→能力的对应关系只该有一份。
+// 写两份的后果是「声明支持」与「实际拒绝」不是同一组条件，于是 UI 上能勾、
+// 编到一半才失败。
+Result<void> checkCapabilities(const EncodeCapabilities &cap, Format format,
+                               const EncodeParams &params) {
+  std::vector<std::string> missing;
+
+  if (format == Format::Jpeg) {
+    if (params.jpeg_progressive && !cap.jpeg_progressive) {
+      missing.emplace_back("progressive");
+    }
+    if (params.jpeg_optimize_huffman && !cap.jpeg_optimize_huffman) {
+      missing.emplace_back("optimize-huffman");
+    }
+    if (params.jpeg_restart_interval > 0 && !cap.jpeg_restart_interval) {
+      missing.emplace_back("restart-interval");
+    }
+    if ((params.jpeg_luma_quality >= 0 || params.jpeg_chroma_quality >= 0) &&
+        !cap.jpeg_luma_chroma_quality) {
+      missing.emplace_back("luma/chroma-quality");
+    }
+  } else if (format == Format::Tiff) {
+    if (params.tiff_predictor > 0 && !cap.tiff_predictor) {
+      missing.emplace_back("predictor");
+    }
+    if ((params.tiff_x_dpi > 0 || params.tiff_y_dpi > 0) &&
+        !cap.tiff_resolution) {
+      missing.emplace_back("resolution");
+    }
+    if (params.tiff_compression == 7 && !cap.tiff_jpeg_compression) {
+      missing.emplace_back("jpeg-compression");
+    }
+    if (params.tiff_compression == 32773 && !cap.tiff_packbits) {
+      missing.emplace_back("packbits");
+    }
+  } else if (format == Format::Png) {
+    if (params.png_strategy >= 0 && !cap.png_strategy) {
+      missing.emplace_back("strategy");
+    }
+  }
+
+  if (missing.empty()) {
+    return {};
+  }
+
+  std::string message = "encode params not supported:";
+  for (const std::string &item : missing) {
+    message += ' ';
+    message += item;
+  }
+  return fail<void>(Status::UnsupportedFormat, std::move(message));
+}
+
 } // namespace
 
 template <class T, class Supports, class Fn>
@@ -58,9 +114,9 @@ Result<T> Router::tryEach(const char *stage, Outcome *outcome,
       continue;
     }
 
-    if (!supports(*backend)) {
-      notes.push_back(std::string(backendName(kind)) +
-                      ": format/direction not supported");
+    if (auto ok = supports(*backend); !ok) {
+      notes.push_back(std::string(backendName(kind)) + ": " +
+                      ok.error().message);
       continue;
     }
 
@@ -179,6 +235,47 @@ std::vector<std::pair<BackendKind, std::string>> Router::probeBackends() const {
   return out;
 }
 
+EncodeCapabilities Router::encodeCapabilities() const {
+  // 取并集：自动模式会把「不支持这组参数」的后端跳过，只要顺序里有**一个**
+  // 能表达，这次请求就能成立。取交集会让「CPU 支持、GPU 不支持」的常用组合
+  // 在界面上被误判成不支持。
+  EncodeCapabilities out;
+  for (BackendKind kind : order_) {
+    ICodecBackend *backend = find(kind);
+    if (backend == nullptr) continue;
+    const EncodeCapabilities cap = backend->encodeCapabilities();
+    out.jpeg_progressive = out.jpeg_progressive || cap.jpeg_progressive;
+    out.jpeg_optimize_huffman =
+        out.jpeg_optimize_huffman || cap.jpeg_optimize_huffman;
+    out.jpeg_restart_interval =
+        out.jpeg_restart_interval || cap.jpeg_restart_interval;
+    out.jpeg_luma_chroma_quality =
+        out.jpeg_luma_chroma_quality || cap.jpeg_luma_chroma_quality;
+    out.tiff_predictor = out.tiff_predictor || cap.tiff_predictor;
+    out.tiff_resolution = out.tiff_resolution || cap.tiff_resolution;
+    out.tiff_packbits = out.tiff_packbits || cap.tiff_packbits;
+    out.tiff_jpeg_compression =
+        out.tiff_jpeg_compression || cap.tiff_jpeg_compression;
+    out.png_strategy = out.png_strategy || cap.png_strategy;
+  }
+  return out;
+}
+
+Result<void> Router::checkEncodeParams(BackendKind kind, Format format,
+                                       const EncodeParams &params) const {
+  ICodecBackend *backend = find(kind);
+  if (backend == nullptr) {
+    return fail<void>(Status::BackendUnavailable,
+                      std::string("backend not built: ") + backendName(kind));
+  }
+  if (!backend->supports(format)) {
+    return fail<void>(Status::UnsupportedFormat,
+                      std::string(backendName(kind)) + " does not support " +
+                          formatName(format));
+  }
+  return checkCapabilities(backend->encodeCapabilities(), format, params);
+}
+
 ICodecBackend *Router::find(BackendKind kind) const {
   for (const auto &backend : backends_) {
     if (backend->kind() == kind) return backend.get();
@@ -201,8 +298,13 @@ Result<std::vector<uint8_t>> Router::encode(Format format, const Image &image,
   }
   return tryEach<std::vector<uint8_t>>(
       "encode", outcome,
-      [format](const ICodecBackend &backend) {
-        return backend.supports(format);
+      [format, &params](const ICodecBackend &backend) -> Result<void> {
+        if (!backend.supports(format)) {
+          return fail<void>(Status::UnsupportedFormat,
+                            std::string("format not supported: ") +
+                                formatName(format));
+        }
+        return checkCapabilities(backend.encodeCapabilities(), format, params);
       },
       [&](ICodecBackend &backend) {
         return backend.encode(format, image, params);
@@ -213,8 +315,13 @@ Result<Image> Router::decode(Format format, const uint8_t *data, size_t size,
                              Outcome *outcome) {
   return tryEach<Image>(
       "decode", outcome,
-      [format](const ICodecBackend &backend) {
-        return backend.supports(format);
+      [format](const ICodecBackend &backend) -> Result<void> {
+        if (!backend.supports(format)) {
+          return fail<void>(Status::UnsupportedFormat,
+                            std::string("format not supported: ") +
+                                formatName(format));
+        }
+        return {};
       },
       [&](ICodecBackend &backend) {
         return backend.decode(format, data, size);
@@ -225,20 +332,20 @@ Result<Image> Router::decode(Format format, const uint8_t *data, size_t size,
 
 Result<double> Router::mse(const Image &a, const Image &b, Outcome *outcome) {
   return tryEach<double>(
-      "mse", outcome, [](const ICodecBackend &) { return true; },
+      "mse", outcome, [](const ICodecBackend &) -> Result<void> { return {}; },
       [&](ICodecBackend &backend) { return backend.mse(a, b); });
 }
 
 Result<double> Router::psnr(const Image &a, const Image &b, Outcome *outcome) {
   return tryEach<double>(
-      "psnr", outcome, [](const ICodecBackend &) { return true; },
+      "psnr", outcome, [](const ICodecBackend &) -> Result<void> { return {}; },
       [&](ICodecBackend &backend) { return backend.psnr(a, b); });
 }
 
 Result<SsimResult> Router::ssim(const Image &a, const Image &b,
                                 Outcome *outcome) {
   return tryEach<SsimResult>(
-      "ssim", outcome, [](const ICodecBackend &) { return true; },
+      "ssim", outcome, [](const ICodecBackend &) -> Result<void> { return {}; },
       [&](ICodecBackend &backend) { return backend.ssim(a, b); });
 }
 
@@ -264,6 +371,13 @@ Result<std::vector<uint8_t>> Router::encodeWith(BackendKind kind, Format format,
         Status::InvalidArgument,
         "encodeWith: jpeg has no alpha channel; convert to 1 or 3 channels "
         "first");
+  }
+  // 强制后端时**先**判断参数能不能表达：一条 lane 绑死一个后端，这里多跑
+  // 一次真实编码只会把「这台后端根本不做渐进式」变成一张编到一半的图。
+  if (auto ok =
+          checkCapabilities(backend->encodeCapabilities(), format, params);
+      !ok) {
+    return std::unexpected(ok.error());
   }
   return backend->encode(format, image, params);
 }

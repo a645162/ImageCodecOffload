@@ -109,13 +109,41 @@ EncodeParams toParams(const ico_encode_params* params) {
   }
   if (params->tiff_tile_size > 0) out.tiff_tile_size = params->tiff_tile_size;
 
-  // PNG 的 -1 是「自适应」，与「未填(0)」不同；只有显式给了非 0 才覆盖。
-  if (params->png_compression < 0) {
-    out.png_compression = 6;
-  } else if (params->png_compression > 0) {
+  // 进阶参数一律用「0 / 负数 = 未指定」表达。C 调用方习惯把结构体 memset 成
+  // 0，若把 0 当成「显式给的质量 0」就会被夹到质量 1——一张几乎全是色块的图，
+  // 而调用方以为自己什么都没改。因此只有**正数**才算显式指定；这也与既有字段
+  // （png_compression 0 → 默认 6、png_filter 0 → 自适应）的约定一致。
+  if (params->jpeg_progressive != 0) out.jpeg_progressive = true;
+  if (params->jpeg_optimize_huffman != 0) out.jpeg_optimize_huffman = true;
+  if (params->jpeg_restart_interval > 0) {
+    out.jpeg_restart_interval = params->jpeg_restart_interval;
+  }
+  if (params->jpeg_luma_quality > 0) {
+    out.jpeg_luma_quality = params->jpeg_luma_quality;
+  }
+  if (params->jpeg_chroma_quality > 0) {
+    out.jpeg_chroma_quality = params->jpeg_chroma_quality;
+  }
+
+  if (params->tiff_predictor > 0) out.tiff_predictor = params->tiff_predictor;
+  if (params->tiff_x_dpi > 0) out.tiff_x_dpi = params->tiff_x_dpi;
+  if (params->tiff_y_dpi > 0) out.tiff_y_dpi = params->tiff_y_dpi;
+  if (params->tiff_resolution_unit > 0) {
+    out.tiff_resolution_unit = params->tiff_resolution_unit;
+  }
+  if (params->tiff_jpeg_quality > 0) {
+    out.tiff_jpeg_quality = params->tiff_jpeg_quality;
+  }
+
+  if (params->png_strategy > 0) out.png_strategy = params->png_strategy;
+
+  // PNG 与上面几个字段不同：等级 0 与「不滤波」都是合法取值，所以这里用
+  // -1 表示未指定，而不是 0——否则这两个值永远表达不出来（0 会被当成
+  // 「没填」而落回默认的 6 / 自适应）。
+  if (params->png_compression >= 0) {
     out.png_compression = params->png_compression;
   }
-  if (params->png_filter != 0) out.png_filter = params->png_filter;
+  if (params->png_filter >= 0) out.png_filter = params->png_filter;
 
   return out;
 }
@@ -289,6 +317,24 @@ ico_status image_codec_offload_last_outcome(ico_codec* codec, int* used_backend,
     std::strncpy(detail, codec->last_detail.c_str(), detail_capacity - 1);
     detail[detail_capacity - 1] = '\0';
   }
+  return ICO_OK;
+}
+
+ico_status
+image_codec_offload_encode_capabilities(ico_codec* codec,
+                                        ico_encode_capabilities* out) {
+  if (codec == nullptr || out == nullptr) return ICO_ERR_INVALID_ARGUMENT;
+
+  const auto caps = codec->router.encodeCapabilities();
+  out->jpeg_progressive = caps.jpeg_progressive ? 1 : 0;
+  out->jpeg_optimize_huffman = caps.jpeg_optimize_huffman ? 1 : 0;
+  out->jpeg_restart_interval = caps.jpeg_restart_interval ? 1 : 0;
+  out->jpeg_luma_chroma_quality = caps.jpeg_luma_chroma_quality ? 1 : 0;
+  out->tiff_predictor = caps.tiff_predictor ? 1 : 0;
+  out->tiff_resolution = caps.tiff_resolution ? 1 : 0;
+  out->tiff_packbits = caps.tiff_packbits ? 1 : 0;
+  out->tiff_jpeg_compression = caps.tiff_jpeg_compression ? 1 : 0;
+  out->png_strategy = caps.png_strategy ? 1 : 0;
   return ICO_OK;
 }
 
