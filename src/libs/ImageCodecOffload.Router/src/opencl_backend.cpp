@@ -182,7 +182,7 @@ public:
     image_codec_image_free(&img);
 
     if (!done) {
-      return std::unexpected(makeError(Status::EncodeFailed, "encode", st));
+      return std::unexpected(makeError(mapStatus(st), "encode", st));
     }
     out.resize(written);
     return out;
@@ -201,7 +201,7 @@ public:
     const image_codec_status st = image_codec_codec_decode(
         codec_, toOpenClFormat(format), data, size, &img);
     if (st != IMAGE_CODEC_OK) {
-      return std::unexpected(makeError(Status::DecodeFailed, "decode", st));
+      return std::unexpected(makeError(mapStatus(st), "decode", st));
     }
 
     Image out;
