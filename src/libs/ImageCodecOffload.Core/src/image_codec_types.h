@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -63,9 +64,32 @@ enum class Format {
   Jpeg = 1,
   Tiff = 2,
   Png = 3,
+  Jpeg2000 = 4,
+  JpegXl = 5,
 };
 
 const char *formatName(Format format);
+
+struct FormatDescriptor {
+  Format format = Format::Unknown;
+  std::string_view displayName;
+  std::string_view description;
+  std::vector<std::string_view> extensions;
+  std::vector<std::string_view> mimeTypes;
+  uint64_t theoreticalMaxWidth = 0;
+  uint64_t theoreticalMaxHeight = 0;
+  uint64_t implementationMaxWidth = 0;
+  uint64_t implementationMaxHeight = 0;
+  bool decode = false;
+  bool encode = false;
+  bool metadata = false;
+  bool tiled = false;
+  bool streaming = false;
+};
+
+const std::vector<FormatDescriptor> &formatDescriptors();
+const FormatDescriptor *formatDescriptor(Format format);
+Format formatFromExtension(std::string_view extension);
 
 // 从文件字节判断格式（看魔数，不看扩展名：扩展名错而内容对是最常见的现场情况）。
 Format probeFormat(const uint8_t *data, size_t size);
@@ -158,6 +182,13 @@ struct EncodeCapabilities {
   bool tiff_packbits = false;
   bool tiff_jpeg_compression = false;
   bool png_strategy = false;
+  // 后端能否把「按行区间」独立压缩成一条 strip 的压缩流（分片并行用）。
+  //
+  // 这个能力与「支持 TIFF」是两件事：整图编码只要写一个容器，分片编码还
+  // 要求「同一段行、同样的标签、独立压缩」得到的字节与整图多 strip 编码的
+  // 对应片逐位相同。做不到的后端必须报 false，由调度器退回整图单 lane，
+  // 绝不允许用「分片结果差不多」蒙混——那会让文件里出现两种压缩参数的片。
+  bool tiff_strip_sharding = false;
 };
 
 // SSIM 与 MS-SSIM 的结果。两者共享第 0 级统计，所以由一次调用一起给出。

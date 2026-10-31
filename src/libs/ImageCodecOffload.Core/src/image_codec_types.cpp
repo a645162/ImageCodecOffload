@@ -9,6 +9,9 @@
 // image_codec_types.cpp - 公共类型的字符串化与格式嗅探。
 #include "image_codec_types.h"
 
+#include <algorithm>
+#include <cctype>
+
 namespace image_codec {
 namespace offload {
 
@@ -44,10 +47,60 @@ const char* formatName(Format format) {
       return "tiff";
     case Format::Png:
       return "png";
+    case Format::Jpeg2000:
+      return "jpeg2000";
+    case Format::JpegXl:
+      return "jpeg-xl";
     case Format::Unknown:
       break;
   }
   return "unknown";
+}
+
+const std::vector<FormatDescriptor> &formatDescriptors() {
+  static const std::vector<FormatDescriptor> descriptors = {
+      {Format::Jpeg, "JPEG", "传统 JPEG（ISO/IEC 10918-1）。",
+       {".jpg", ".jpeg", ".jpe"}, {"image/jpeg"}, 65535, 65535, 65535,
+       65535, true, true, true, false, true},
+      {Format::Tiff, "TIFF", "支持条带和瓦片布局的 TIFF 容器。",
+       {".tif", ".tiff"}, {"image/tiff"}, 0, 0, 0, 0, true, true, true,
+       true, true},
+      {Format::Png, "PNG", "无损 PNG 图像。", {".png"}, {"image/png"}, 0,
+       0, 0, 0, true, true, true, false, true},
+      {Format::Jpeg2000, "JPEG 2000", "基于小波变换的 JPEG 2000。",
+       {".jp2", ".j2k", ".jpf", ".jpx"}, {"image/jp2", "image/jpx"}, 0,
+       0, 0, 0, true, true, true, true, true},
+      {Format::JpegXl, "JPEG XL", "新一代 JPEG XL 图像格式。", {".jxl"},
+       {"image/jxl"}, 0, 0, 0, 0, true, true, true, true, true},
+  };
+  return descriptors;
+}
+
+const FormatDescriptor *formatDescriptor(Format format) {
+  const auto &descriptors = formatDescriptors();
+  const auto it = std::find_if(descriptors.begin(), descriptors.end(),
+                               [format](const FormatDescriptor &descriptor) {
+                                 return descriptor.format == format;
+                               });
+  return it == descriptors.end() ? nullptr : &*it;
+}
+
+Format formatFromExtension(std::string_view extension) {
+  std::string normalized;
+  normalized.reserve(extension.size() + 1);
+  for (const char ch : extension) {
+    normalized.push_back(
+        static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+  }
+  if (!normalized.empty() && normalized.front() != '.') {
+    normalized.insert(normalized.begin(), '.');
+  }
+  for (const auto &descriptor : formatDescriptors()) {
+    for (const auto candidate : descriptor.extensions) {
+      if (normalized == candidate) return descriptor.format;
+    }
+  }
+  return Format::Unknown;
 }
 
 const char* backendName(BackendKind kind) {
@@ -94,6 +147,25 @@ Format probeFormat(const uint8_t* data, size_t size) {
                     data[3] == 0x2A;
     if (le || be) return Format::Tiff;
   }
+
+  // JPEG 2000 JP2 box or raw codestream.
+  if (size >= 12 && data[4] == 'j' && data[5] == 'P' && data[6] == ' ' &&
+      data[7] == ' ' && data[8] == 0x0D && data[9] == 0x0A &&
+      data[10] == 0x87 && data[11] == 0x0A) {
+    return Format::Jpeg2000;
+  }
+  if (size >= 4 && data[0] == 0xFF && data[1] == 0x4F && data[2] == 0xFF &&
+      data[3] == 0x51) {
+    return Format::Jpeg2000;
+  }
+
+  // JPEG XL container or naked codestream.
+  if (size >= 12 && data[4] == 'J' && data[5] == 'X' && data[6] == 'L' &&
+      data[7] == ' ' && data[8] == 0x0D && data[9] == 0x0A &&
+      data[10] == 0x87 && data[11] == 0x0A) {
+    return Format::JpegXl;
+  }
+  if (size >= 2 && data[0] == 0xFF && data[1] == 0x0A) return Format::JpegXl;
 
   return Format::Unknown;
 }

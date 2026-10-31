@@ -61,6 +61,8 @@ typedef enum ico_format {
   ICO_FORMAT_JPEG = 0,
   ICO_FORMAT_TIFF = 1,
   ICO_FORMAT_PNG = 2,
+  ICO_FORMAT_JPEG2000 = 3,
+  ICO_FORMAT_JPEG_XL = 4,
   ICO_FORMAT_UNKNOWN = -1
 } ico_format;
 
@@ -142,6 +144,9 @@ typedef struct ico_encode_capabilities {
   int tiff_packbits;
   int tiff_jpeg_compression;
   int png_strategy;
+  // 能否把「一段连续行」独立压缩成一条 TIFF strip 的压缩流（见
+  // image_codec_offload_tiff_strip_encode）。分片并行只在这个能力为真时可用。
+  int tiff_strip_sharding;
 } ico_encode_capabilities;
 
 // SSIM 与 MS-SSIM 的结果：两者共享第 0 级统计，由一次调用一起给出。
@@ -225,6 +230,46 @@ ICO_API ico_status image_codec_offload_encode(ico_codec *codec, int format,
                                               const ico_encode_params *params,
                                               void *out, size_t *out_len,
                                               size_t out_capacity);
+
+// ---- TIFF 分片（把一帧按 strip 切给多条 lane 并行压缩）----
+//
+// 用法：每条 lane 调一次 image_codec_offload_tiff_strip_encode 压自己那段行，
+// 全部完成后调一次 image_codec_offload_tiff_assemble 拼成文件。
+//
+// 正确性契约：分片结果与「同一张图、同一组参数一次性编码」**逐字节相同**。
+// 这要求两件事同时成立：① 每片的压缩流与整图多 strip 编码的对应片逐位相同
+// （各后端自己保证，靠 tiff_strip_sharding 能力位声明）；② 容器按 libtiff
+// 的目录布局拼装（本库自己写，见 tiff_container.cpp）。
+//
+// 支持范围：compression = 1/5/8/32773（无压缩 / LZW / Deflate / PackBits），
+// 且必须是 strip 布局（tiff_tile_size 必须为 0）。JPEG-in-TIFF 与 tiled 布局
+// 返回 ICO_ERR_UNSUPPORTED_FORMAT，由调用方退回整图单 lane。
+
+// 拼装所需的容器信息。压缩 / Predictor / DPI 从 params 取（与整图编码同一套
+// 语义），因此这里不需要再传一遍。
+typedef struct ico_tiff_assembly {
+  int width;
+  int height;
+  int channels;       // 1 / 2 / 3 / 4
+  int rows_per_strip; // > 0；条数必须等于 ceil(height / rows_per_strip)
+  ico_encode_params params;
+} ico_tiff_assembly;
+
+// 把 ico_image 的 [first_row, first_row + rows) 独立压缩成一条 strip 的压缩流
+// （不含容器；由 image_codec_offload_tiff_assemble 负责拼）。
+// out/out_len/out_capacity 语义与 image_codec_offload_encode 一致。
+ICO_API ico_status image_codec_offload_tiff_strip_encode(
+    ico_codec *codec, const ico_image *img, int first_row, int rows,
+    const ico_encode_params *params, void *out, size_t *out_len,
+    size_t out_capacity);
+
+// 把已经压好的 strips 按行顺序拼成一份 TIFF。
+// strips[i] / strip_sizes[i] 是第 i 条的压缩流（可为 NULL，仅当对应长度为 0）。
+// 不需要句柄：拼装是纯容器操作，与后端无关。
+ICO_API ico_status image_codec_offload_tiff_assemble(
+    const ico_tiff_assembly *assembly, const void *const *strips,
+    const size_t *strip_sizes, int strip_count, void *out, size_t *out_len,
+    size_t out_capacity);
 
 // 释放 ico_image（含 data）。NULL 安全。
 ICO_API void image_codec_offload_image_free(ico_image *img);

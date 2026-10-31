@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <ImageCodecOffload/image_codec_offload.h>
@@ -45,6 +46,27 @@ void check(bool ok, const char *what) {
     std::fprintf(stderr, "FAIL: %s\n", what);
     ++g_failures;
   }
+}
+
+void testFormatCatalogAndProbe() {
+  const auto &descriptors = image_codec::offload::formatDescriptors();
+  check(descriptors.size() == 5, "format catalog has five formats");
+  check(image_codec::offload::formatFromExtension("JP2") == Format::Jpeg2000,
+        "jp2 extension");
+  check(image_codec::offload::formatFromExtension("jpf") == Format::Jpeg2000,
+        "jpf extension");
+  check(image_codec::offload::formatFromExtension("jpx") == Format::Jpeg2000,
+        "jpx extension");
+  check(image_codec::offload::formatFromExtension("jxl") == Format::JpegXl,
+        "jxl extension");
+  const uint8_t jp2[] = {0x00, 0x00, 0x00, 0x0C, 'j', 'P', ' ', ' ', 0x0D,
+                         0x0A, 0x87, 0x0A};
+  check(image_codec::offload::probeFormat(jp2, sizeof(jp2)) == Format::Jpeg2000,
+        "jp2 signature");
+  const uint8_t jxl[] = {0x00, 0x00, 0x00, 0x0C, 'J', 'X', 'L', ' ', 0x0D,
+                         0x0A, 0x87, 0x0A};
+  check(image_codec::offload::probeFormat(jxl, sizeof(jxl)) == Format::JpegXl,
+        "jxl signature");
 }
 
 // 确定性图案（纯渐变会让压缩缺陷被掩盖；这里要的是有局部随机性）。
@@ -969,6 +991,22 @@ void testTiffAdvancedParams() {
   check(decodeCpu(router, Format::Tiff, explicit_none_bytes) == src.pixels,
         "explicit predictor=none stays lossless");
 
+  // Predictor 只对**真的有预测器**的压缩方式有意义：libtiff 的 Predictor 字段
+  // 是 tif_predict.c 在注册 LZW / Deflate 时合并进字段表的，COMPRESSION_NONE
+  // 与 PackBits 下 `TIFFSetField` 会报 "Unknown tag 317" 并静默丢弃。请求
+  // 必须因此变成 no-op（产物与不请求逐字节相同），绝不能多写一个无效标签。
+  for (const int compression : {1, 32773}) {
+    EncodeParams without_pred = base;
+    without_pred.tiff_compression = compression;
+    EncodeParams with_pred = without_pred;
+    with_pred.tiff_predictor = 2;
+    const auto plain_bytes =
+        encodeCpu(router, Format::Tiff, src, without_pred);
+    const auto pred_bytes = encodeCpu(router, Format::Tiff, src, with_pred);
+    check(!plain_bytes.empty() && plain_bytes == pred_bytes,
+          "predictor is a no-op for compressions without a predictor");
+  }
+
   // 分辨率：给了才写；y 缺省跟随 x；单位默认英寸、可显式厘米。
   EncodeParams resolved = base;
   resolved.tiff_x_dpi = 300;
@@ -1179,7 +1217,8 @@ void testForcedCapabilitiesMatchBackend() {
            c.tiff_resolution == (ref.tiff_resolution ? 1 : 0) &&
            c.tiff_packbits == (ref.tiff_packbits ? 1 : 0) &&
            c.tiff_jpeg_compression == (ref.tiff_jpeg_compression ? 1 : 0) &&
-           c.png_strategy == (ref.png_strategy ? 1 : 0);
+           c.png_strategy == (ref.png_strategy ? 1 : 0) &&
+           c.tiff_strip_sharding == (ref.tiff_strip_sharding ? 1 : 0);
   };
 
   Router router;
@@ -1348,9 +1387,323 @@ void testCapiAdvancedParams() {
   image_codec_offload_destroy(cpu);
 }
 
+
+// ---- TIFF 分片：与整图编码**逐字节相同** ----
+//
+// 分片的合法性全靠这一点：把一段行独立压成一条 strip，得到的压缩流必须与
+// 「整图、RowsPerStrip = 片高」编码时对应那条逐位相同。只要有一条不成立，
+// 拼出来的文件就会同时包含两种压缩参数（LZW 字典/Predictor 状态按 strip
+// 重置，但参数字节流不同）——文件能打开、像素看着也对，只有校验和变了。
+//
+// 这里同时验三件事：
+//   1. 单 lane 串行分片 == 整图编码（字节级）；
+//   2. 多 lane 并行分片（每 lane 自己的句柄）== 同一个结果（fan-in 顺序无关）；
+//   3. 声明不了分片的强制句柄必须**明确拒绝**，而不是拼一个残缺文件。
+void testTiffStripSharding() {
+  const Image src = makeImage(96, 80, 3);
+  Router router;
+
+  ico_image image{};
+  image.width = static_cast<uint32_t>(src.width);
+  image.height = static_cast<uint32_t>(src.height);
+  image.channels = static_cast<uint32_t>(src.channels);
+  image.stride = static_cast<uint32_t>(src.rowBytes());
+  image.data_size = src.pixels.size();
+  image.data = const_cast<uint8_t *>(src.pixels.data());
+
+  ico_codec *cpu = nullptr;
+  check(image_codec_offload_create_forced(&cpu, ICO_BACKEND_CPU) == ICO_OK,
+        "strip sharding: create_forced(cpu)");
+  if (cpu == nullptr) return;
+
+  ico_encode_capabilities caps{};
+  check(image_codec_offload_encode_capabilities(cpu, &caps) == ICO_OK &&
+            caps.tiff_strip_sharding == 1,
+        "cpu declares tiff strip sharding");
+
+  struct Case {
+    int compression;
+    int predictor; // -1 = 不写标签
+    int rows_per_strip;
+    int channels;
+    int dpi;
+  };
+  std::vector<Case> cases;
+  for (const int channels : {1, 3, 4}) {
+    for (const int compression : {1, 5, 8, 32773}) {
+      for (const int predictor : {-1, 2}) {
+        for (const int rps : {16, 31}) {
+          cases.push_back({compression, predictor, rps, channels,
+                           (rps == 31 ? 300 : 0)});
+        }
+      }
+    }
+  }
+
+  int compared = 0;
+  for (const Case &item : cases) {
+    const Image frame = (item.channels == 3) ? src : makeImage(96, 80, item.channels);
+
+    ico_image frame_image{};
+    frame_image.width = static_cast<uint32_t>(frame.width);
+    frame_image.height = static_cast<uint32_t>(frame.height);
+    frame_image.channels = static_cast<uint32_t>(frame.channels);
+    frame_image.stride = static_cast<uint32_t>(frame.rowBytes());
+    frame_image.data_size = frame.pixels.size();
+    frame_image.data = const_cast<uint8_t *>(frame.pixels.data());
+
+    ico_encode_params params{};
+    params.tiff_compression = item.compression;
+    params.tiff_rows_per_strip = item.rows_per_strip;
+    params.tiff_predictor = item.predictor;
+    params.tiff_x_dpi = item.dpi;
+    params.tiff_y_dpi = item.dpi;
+
+    // 参照：整图一次编码（同参数、同 RowsPerStrip）。
+    EncodeParams internal;
+    internal.tiff_compression = item.compression;
+    internal.tiff_rows_per_strip = item.rows_per_strip;
+    internal.tiff_predictor = item.predictor;
+    internal.tiff_x_dpi = item.dpi;
+    internal.tiff_y_dpi = item.dpi;
+    const auto whole = router.encodeWith(BackendKind::Cpu, Format::Tiff, frame,
+                                         internal);
+    if (!whole) {
+      std::printf("strip sharding: whole encode failed (comp=%d)\n",
+                  item.compression);
+      check(false, "strip sharding: reference encode must succeed");
+      continue;
+    }
+
+    const int strip_count =
+        (frame.height + item.rows_per_strip - 1) / item.rows_per_strip;
+    std::vector<std::vector<uint8_t>> payloads;
+    for (int index = 0; index < strip_count; ++index) {
+      const int first_row = index * item.rows_per_strip;
+      const int rows = (first_row + item.rows_per_strip <= frame.height)
+                           ? item.rows_per_strip
+                           : (frame.height - first_row);
+      std::vector<uint8_t> buffer(frame.pixels.size() + 4096);
+      size_t length = buffer.size();
+      const ico_status status = image_codec_offload_tiff_strip_encode(
+          cpu, &frame_image, first_row, rows, &params, buffer.data(), &length,
+          buffer.size());
+      if (status != ICO_OK) {
+        std::printf("strip sharding: strip encode failed (comp=%d ch=%d s=%d)\n",
+                    item.compression, item.channels, status);
+        check(false, "strip encode must succeed for a supported compression");
+        payloads.clear();
+        break;
+      }
+      buffer.resize(length);
+      payloads.push_back(std::move(buffer));
+    }
+    if (payloads.empty()) continue;
+
+    std::vector<const void *> pointers;
+    std::vector<size_t> sizes;
+    for (const auto &payload : payloads) {
+      pointers.push_back(payload.data());
+      sizes.push_back(payload.size());
+    }
+
+    ico_tiff_assembly assembly{};
+    assembly.width = frame.width;
+    assembly.height = frame.height;
+    assembly.channels = frame.channels;
+    assembly.rows_per_strip = item.rows_per_strip;
+    assembly.params = params;
+
+    std::vector<uint8_t> assembled(whole->size() + 4096);
+    size_t assembled_len = assembled.size();
+    const ico_status status = image_codec_offload_tiff_assemble(
+        &assembly, pointers.data(), sizes.data(), static_cast<int>(sizes.size()),
+        assembled.data(), &assembled_len, assembled.size());
+    check(status == ICO_OK, "tiff assemble succeeds");
+    if (status != ICO_OK) continue;
+    assembled.resize(assembled_len);
+
+    if (assembled != *whole) {
+      std::printf(
+          "strip sharding mismatch: comp=%d pred=%d rps=%d ch=%d dpi=%d "
+          "(%zu vs %zu bytes)\n",
+          item.compression, item.predictor, item.rows_per_strip, item.channels,
+          item.dpi, assembled.size(), whole->size());
+    }
+    check(assembled == *whole,
+          "strip sharding is byte-identical to whole-image encoding");
+    ++compared;
+  }
+  std::printf("tiff strip sharding: %d case(s) byte-identical\n", compared);
+
+  // 参数非法 / 不支持的组合必须**拒绝**，不能拼出残缺文件。
+  {
+    ico_encode_params tiled{};
+    tiled.tiff_compression = 5;
+    tiled.tiff_tile_size = 256; // tiled 布局用 Tile* 数组，与 Strip* 无关
+    std::vector<uint8_t> buffer(1024);
+    size_t length = buffer.size();
+    check(image_codec_offload_tiff_strip_encode(
+              cpu, &image, 0, 16, &tiled, buffer.data(), &length,
+              buffer.size()) == ICO_ERR_UNSUPPORTED_FORMAT,
+          "tiled layout is rejected for strip sharding");
+
+    ico_encode_params jpeg_in_tiff{};
+    jpeg_in_tiff.tiff_compression = 7; // 依赖 JPEGTABLES 共享量化表
+    length = buffer.size();
+    check(image_codec_offload_tiff_strip_encode(cpu, &image, 0, 16,
+                                                &jpeg_in_tiff, buffer.data(),
+                                                &length,
+                                                buffer.size()) ==
+              ICO_ERR_UNSUPPORTED_FORMAT,
+          "jpeg-in-tiff is rejected for strip sharding");
+
+    ico_encode_params plain{};
+    plain.tiff_compression = 5;
+    length = buffer.size();
+    check(image_codec_offload_tiff_strip_encode(cpu, &image, 60, 40, &plain,
+                                                buffer.data(), &length,
+                                                buffer.size()) ==
+              ICO_ERR_INVALID_ARGUMENT,
+          "out-of-range strip row range is rejected");
+
+    std::vector<std::vector<uint8_t>> one;
+    one.emplace_back(16);
+    std::vector<const void *> pointers{one[0].data()};
+    std::vector<size_t> sizes{one[0].size()};
+    ico_tiff_assembly assembly{};
+    assembly.width = image.width;
+    assembly.height = image.height;
+    assembly.channels = image.channels;
+    assembly.rows_per_strip = 16; // 80 行 / 16 = 5 条，这里只给 1 条
+    assembly.params = plain;
+    std::vector<uint8_t> out(4096);
+    size_t out_len = out.size();
+    check(image_codec_offload_tiff_assemble(
+              &assembly, pointers.data(), sizes.data(), 1, out.data(), &out_len,
+              out.size()) == ICO_ERR_INVALID_ARGUMENT,
+          "assemble rejects a strip count that does not match rows_per_strip");
+  }
+
+  // 多 lane 并行：每个 lane 用**自己的**句柄（C API 不保证句柄可并发）。
+  // 分片之间互不依赖，fan-in 按行顺序拼装，结果必须与串行逐字节相同。
+  {
+    const int rows_per_strip = 8; // 80 行 / 8 = 10 片，够多个 lane 抢
+    ico_encode_params params{};
+    params.tiff_compression = 5;
+    params.tiff_predictor = 2;
+    params.tiff_rows_per_strip = rows_per_strip;
+    params.tiff_x_dpi = 300;
+    params.tiff_y_dpi = 300;
+
+    EncodeParams internal;
+    internal.tiff_compression = 5;
+    internal.tiff_predictor = 2;
+    internal.tiff_rows_per_strip = rows_per_strip;
+    internal.tiff_x_dpi = 300;
+    internal.tiff_y_dpi = 300;
+    const auto whole =
+        router.encodeWith(BackendKind::Cpu, Format::Tiff, src, internal);
+    check(static_cast<bool>(whole), "parallel sharding: reference encode");
+
+    const int strip_count = src.height / rows_per_strip;
+    std::vector<std::vector<uint8_t>> payloads(
+        static_cast<size_t>(strip_count));
+    const int lanes = 4;
+    std::vector<std::thread> workers;
+    for (int lane = 0; lane < lanes; ++lane) {
+      workers.emplace_back([&, lane]() {
+        ico_codec *codec = nullptr;
+        if (image_codec_offload_create_forced(&codec, ICO_BACKEND_CPU) !=
+                ICO_OK ||
+            codec == nullptr) {
+          return;
+        }
+        ico_image local{};
+        local.width = static_cast<uint32_t>(src.width);
+        local.height = static_cast<uint32_t>(src.height);
+        local.channels = static_cast<uint32_t>(src.channels);
+        local.stride = static_cast<uint32_t>(src.rowBytes());
+        local.data_size = src.pixels.size();
+        local.data = const_cast<uint8_t *>(src.pixels.data());
+        for (int index = lane; index < strip_count; index += lanes) {
+          std::vector<uint8_t> buffer(src.pixels.size() / strip_count + 4096);
+          size_t length = buffer.size();
+          if (image_codec_offload_tiff_strip_encode(
+                  codec, &local, index * rows_per_strip, rows_per_strip,
+                  &params, buffer.data(), &length, buffer.size()) != ICO_OK) {
+            payloads[static_cast<size_t>(index)].clear();
+            continue;
+          }
+          buffer.resize(length);
+          payloads[static_cast<size_t>(index)] = std::move(buffer);
+        }
+        image_codec_offload_destroy(codec);
+      });
+    }
+    for (auto &worker : workers) worker.join();
+
+    std::vector<const void *> pointers;
+    std::vector<size_t> sizes;
+    bool complete = true;
+    for (const auto &payload : payloads) {
+      complete = complete && !payload.empty();
+      pointers.push_back(payload.data());
+      sizes.push_back(payload.size());
+    }
+    check(complete, "every parallel strip produced bytes");
+    if (complete && whole) {
+      ico_tiff_assembly assembly{};
+      assembly.width = src.width;
+      assembly.height = src.height;
+      assembly.channels = src.channels;
+      assembly.rows_per_strip = rows_per_strip;
+      assembly.params = params;
+      std::vector<uint8_t> out(whole->size() + 4096);
+      size_t out_len = out.size();
+      check(image_codec_offload_tiff_assemble(
+                &assembly, pointers.data(), sizes.data(), strip_count,
+                out.data(), &out_len, out.size()) == ICO_OK,
+            "parallel sharding: assemble");
+      out.resize(out_len);
+      check(out == *whole,
+            "parallel sharding is byte-identical to whole-image encoding");
+    }
+  }
+
+  // 声明不了分片的后端：强制句柄必须明确拒绝（绝不拼残缺文件）。
+  {
+    ico_codec *gpu = nullptr;
+    check(image_codec_offload_create_forced(&gpu, ICO_BACKEND_OPENCL) == ICO_OK,
+          "strip sharding: create_forced(opencl)");
+    if (gpu != nullptr) {
+      ico_encode_capabilities gpu_caps{};
+      if (image_codec_offload_encode_capabilities(gpu, &gpu_caps) == ICO_OK) {
+        check(gpu_caps.tiff_strip_sharding == 0,
+              "gpu backends do not declare tiff strip sharding");
+      }
+      ico_encode_params params{};
+      params.tiff_compression = 5;
+      std::vector<uint8_t> buffer(1024);
+      size_t length = buffer.size();
+      const ico_status status = image_codec_offload_tiff_strip_encode(
+          gpu, &image, 0, 16, &params, buffer.data(), &length, buffer.size());
+      // 没编进本构建 → BackendUnavailable（能力表全 0）；编进来了 → 一定
+      // 是 UnsupportedFormat。两者都不能是 OK。
+      check(status == ICO_ERR_BACKEND_UNAVAILABLE ||
+                status == ICO_ERR_UNSUPPORTED_FORMAT,
+            "forced non-sharding backend rejects strip encode");
+      image_codec_offload_destroy(gpu);
+    }
+  }
+
+  image_codec_offload_destroy(cpu);
+}
+
 } // namespace
 
 int main() {
+  testFormatCatalogAndProbe();
   testBmpRoundtrip();
   testCpuRoundtrip();
   testCpuChannelMatrix();
@@ -1370,6 +1723,7 @@ int main() {
   testCapabilityContract();
   testForcedCapabilitiesMatchBackend();
   testCapiAdvancedParams();
+  testTiffStripSharding();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "%d check(s) failed\n", g_failures);

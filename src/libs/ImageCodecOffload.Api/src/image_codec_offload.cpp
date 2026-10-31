@@ -21,6 +21,8 @@
 
 #include "image_codec_types.h"
 #include "router.h"
+#include "tiff_container.h"
+#include "tiff_io.h"
 
 using image_codec::offload::BackendKind;
 using image_codec::offload::EncodeParams;
@@ -80,6 +82,10 @@ Format toFormat(int format) {
       return Format::Tiff;
     case ICO_FORMAT_PNG:
       return Format::Png;
+    case ICO_FORMAT_JPEG2000:
+      return Format::Jpeg2000;
+    case ICO_FORMAT_JPEG_XL:
+      return Format::JpegXl;
     default:
       return Format::Unknown;
   }
@@ -345,6 +351,7 @@ image_codec_offload_encode_capabilities(ico_codec* codec,
   out->tiff_packbits = caps.tiff_packbits ? 1 : 0;
   out->tiff_jpeg_compression = caps.tiff_jpeg_compression ? 1 : 0;
   out->png_strategy = caps.png_strategy ? 1 : 0;
+  out->tiff_strip_sharding = caps.tiff_strip_sharding ? 1 : 0;
   return ICO_OK;
 }
 
@@ -440,6 +447,83 @@ ico_status image_codec_offload_encode(ico_codec* codec, int format,
 
   std::memcpy(out, encoded->data(), encoded->size());
   *out_len = encoded->size();
+  return ICO_OK;
+}
+
+ico_status image_codec_offload_tiff_strip_encode(
+    ico_codec* codec, const ico_image* img, int first_row, int rows,
+    const ico_encode_params* params, void* out, size_t* out_len,
+    size_t out_capacity) {
+  if (codec == nullptr || img == nullptr || out_len == nullptr) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
+
+  Image image;
+  if (!importImage(img, &image)) return ICO_ERR_INVALID_ARGUMENT;
+
+  Outcome outcome;
+  const auto encoded =
+      codec->forced
+          ? codec->router.encodeTiffStripWith(codec->forced_kind, image,
+                                              first_row, rows,
+                                              toParams(params))
+          : codec->router.encodeTiffStrip(image, first_row, rows,
+                                          toParams(params), &outcome);
+  if (codec->forced) outcome.used = codec->forced_kind;
+  record(codec, outcome);
+  if (!encoded) return mapStatus(encoded.error().code);
+
+  if (out == nullptr || out_capacity < encoded->size()) {
+    *out_len = encoded->size();
+    return ICO_ERR_OUT_OF_MEMORY;
+  }
+  std::memcpy(out, encoded->data(), encoded->size());
+  *out_len = encoded->size();
+  return ICO_OK;
+}
+
+ico_status image_codec_offload_tiff_assemble(
+    const ico_tiff_assembly* assembly, const void* const* strips,
+    const size_t* strip_sizes, int strip_count, void* out, size_t* out_len,
+    size_t out_capacity) {
+  if (assembly == nullptr || out_len == nullptr || strip_count <= 0 ||
+      strips == nullptr || strip_sizes == nullptr) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
+
+  // 片流按顺序交给拼装器；这里只做「条数/尺寸」这类结构校验，压缩参数的解释
+  // 交给 layoutFromParams（与整图编码同一套映射，避免两处各写一份缺省值）。
+  std::vector<std::vector<uint8_t>> payloads;
+  payloads.reserve(static_cast<size_t>(strip_count));
+  for (int index = 0; index < strip_count; ++index) {
+    if (strips[index] == nullptr || strip_sizes[index] == 0) {
+      return ICO_ERR_INVALID_ARGUMENT;
+    }
+    const auto* begin = static_cast<const uint8_t*>(strips[index]);
+    payloads.emplace_back(begin, begin + strip_sizes[index]);
+  }
+
+  Image shape;
+  shape.width = assembly->width;
+  shape.height = assembly->height;
+  shape.channels = assembly->channels;
+  if (shape.width <= 0 || shape.height <= 0 || shape.channels < 1 ||
+      shape.channels > 4) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
+
+  const auto layout = image_codec::offload::cpu::layoutFromParams(
+      shape, toParams(&assembly->params), assembly->rows_per_strip);
+  const auto assembled =
+      image_codec::offload::cpu::assembleClassicTiff(layout, payloads);
+  if (!assembled) return mapStatus(assembled.error().code);
+
+  if (out == nullptr || out_capacity < assembled->size()) {
+    *out_len = assembled->size();
+    return ICO_ERR_OUT_OF_MEMORY;
+  }
+  std::memcpy(out, assembled->data(), assembled->size());
+  *out_len = assembled->size();
   return ICO_OK;
 }
 
