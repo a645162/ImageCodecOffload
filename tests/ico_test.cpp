@@ -174,6 +174,41 @@ void testJpegXlCpuRoundtrip() {
   }
 }
 
+void testGpuHybridNewFormatRoundtrip() {
+  Router router;
+  const Image source = makeImage(29, 17, 3);
+  for (const BackendKind backend : {BackendKind::OpenCl, BackendKind::Cuda,
+                                    BackendKind::Vulkan}) {
+    for (const Format format : {Format::Jpeg2000, Format::JpegXl}) {
+      if (!router.supports(backend, format)) {
+        check(router.executionMode(backend, format) ==
+                  ExecutionMode::Unavailable,
+              "unbuilt gpu new format reports unavailable");
+        continue;
+      }
+      check(router.executionMode(backend, format) ==
+                ExecutionMode::HybridCpuGpu,
+            "gpu new format reports hybrid execution mode");
+      const auto encoded =
+          router.encodeWith(backend, format, source, EncodeParams{});
+      if (!encoded) {
+        check(encoded.error().code == Status::BackendUnavailable,
+              "gpu new format failure is an explicit availability error");
+        continue;
+      }
+      check(!encoded->empty(), "gpu new format produced bytes");
+      const auto decoded =
+          router.decodeWith(backend, format, encoded->data(), encoded->size());
+      check(static_cast<bool>(decoded), "gpu new format decoded output");
+      if (decoded) {
+        check(decoded->width == source.width && decoded->height == source.height,
+              "gpu new format geometry");
+        check(decoded->channels == source.channels, "gpu new format channels");
+      }
+    }
+  }
+}
+
 // 确定性图案（纯渐变会让压缩缺陷被掩盖；这里要的是有局部随机性）。
 // 与 ImageCodecCUDA / ImageCodecOpenCL 的同名测试逐字相同：三个后端必须在
 // 同一张图上给出同一组数字。
@@ -1823,6 +1858,7 @@ int main() {
   testExecutionModeContract();
   testJpeg2000CpuRoundtrip();
   testJpegXlCpuRoundtrip();
+  testGpuHybridNewFormatRoundtrip();
   testBmpRoundtrip();
   testCpuRoundtrip();
   testCpuChannelMatrix();
