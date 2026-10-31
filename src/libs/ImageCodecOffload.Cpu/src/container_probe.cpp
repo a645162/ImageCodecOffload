@@ -29,6 +29,10 @@ Result<int> probeChannels(Format format, const uint8_t* data, size_t size) {
       return probePngChannels(data, size);
     case Format::Tiff:
       return probeTiffChannels(data, size);
+    case Format::Jpeg2000:
+    case Format::JpegXl:
+      return fail<int>(Status::UnsupportedFormat,
+                       "probe: extended format channel probe unavailable");
     case Format::Unknown:
       break;
   }
