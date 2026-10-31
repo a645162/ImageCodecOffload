@@ -47,6 +47,23 @@ public:
     return supports(format) ? ExecutionMode::Cpu : ExecutionMode::Unavailable;
   }
 
+  // 当前设备对整图路径的保守像素预算。默认实现只确认后端状态；没有可靠
+  // 的设备内存计数器时不能编造一个数字，调用方必须显示 detail 中的原因。
+  virtual Result<RuntimeResolutionLimit>
+  runtimeResolutionLimit(Format format) const {
+    if (!supports(format)) {
+      return fail<RuntimeResolutionLimit>(
+          Status::UnsupportedFormat,
+          std::string("backend does not support ") + formatName(format));
+    }
+    if (const auto ready = available(); !ready) {
+      return std::unexpected(ready.error());
+    }
+    return RuntimeResolutionLimit{
+        0, 0, 0,
+        "backend does not expose a reliable live memory budget"};
+  }
+
   virtual Result<std::vector<uint8_t>> encode(Format format, const Image &image,
                                               const EncodeParams &params) = 0;
 

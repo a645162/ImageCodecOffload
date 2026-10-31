@@ -19,6 +19,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -168,6 +169,35 @@ class CudaBackend final : public ICodecBackend {
 
     available_result_ = {};
     return available_result_;
+  }
+
+  Result<RuntimeResolutionLimit>
+  runtimeResolutionLimit(Format format) const override {
+    if (!supports(format)) {
+      return fail<RuntimeResolutionLimit>(
+          Status::UnsupportedFormat,
+          std::string("cuda: format not supported: ") + formatName(format));
+    }
+    if (const auto ready = available(); !ready) {
+      return std::unexpected(ready.error());
+    }
+    image_codec_cuda_memory_info memory{};
+    const auto status = image_codec_cuda_get_memory_info(codec_, &memory);
+    if (status != IMAGE_CODEC_CUDA_OK) {
+      return fail<RuntimeResolutionLimit>(
+          mapStatus(status), std::string("cuda: memory query failed: ") +
+                                 image_codec_cuda_status_string(status));
+    }
+    uint64_t usable = memory.free_bytes;
+    if (memory.budget_bytes != 0) {
+      usable = std::min<uint64_t>(usable, memory.budget_bytes);
+    }
+    // Hybrid staging allocates one input and one output device image.  Four
+    // 8-bit channels therefore need at most eight device bytes per pixel.
+    constexpr uint32_t kBytesPerPixel = 8;
+    return RuntimeResolutionLimit{
+        usable / kBytesPerPixel, usable, kBytesPerPixel,
+        "CUDA free/budget memory; conservative for two 4-channel staging buffers"};
   }
 
   Result<std::vector<uint8_t>> encode(Format format, const Image& image,

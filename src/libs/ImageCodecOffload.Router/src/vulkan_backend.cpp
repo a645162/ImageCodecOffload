@@ -16,6 +16,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -170,6 +171,38 @@ public:
 
     available_result_ = {};
     return available_result_;
+  }
+
+  Result<RuntimeResolutionLimit>
+  runtimeResolutionLimit(Format format) const override {
+    if (!supports(format)) {
+      return fail<RuntimeResolutionLimit>(
+          Status::UnsupportedFormat,
+          std::string("vulkan: format not supported: ") + formatName(format));
+    }
+    if (const auto ready = available(); !ready) {
+      return std::unexpected(ready.error());
+    }
+    image_codec_vulkan_memory_info memory{};
+    const auto status = image_codec_vulkan_get_memory_info(codec_, &memory);
+    if (status != IMAGE_CODEC_VULKAN_OK) {
+      return fail<RuntimeResolutionLimit>(
+          mapStatus(status), std::string("vulkan: memory query failed: ") +
+                                 image_codec_vulkan_status_string(status));
+    }
+    uint64_t usable = memory.free_bytes;
+    if (usable == 0) usable = memory.max_alloc_bytes;
+    if (memory.budget_bytes != 0) {
+      usable = std::min<uint64_t>(usable, memory.budget_bytes);
+    }
+    if (memory.max_alloc_bytes != 0) {
+      // Each staging buffer must itself fit in one allocation.
+      usable = std::min<uint64_t>(usable, memory.max_alloc_bytes * 2);
+    }
+    constexpr uint32_t kBytesPerPixel = 8;
+    return RuntimeResolutionLimit{
+        usable / kBytesPerPixel, usable, kBytesPerPixel,
+        "Vulkan free/budget memory; conservative for two 4-channel staging buffers"};
   }
 
   Result<std::vector<uint8_t>> encode(Format format, const Image &image,

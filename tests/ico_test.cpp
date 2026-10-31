@@ -112,6 +112,33 @@ void testExecutionModeContract() {
   }
 }
 
+void testRuntimeResolutionLimitContract() {
+  Router router;
+  for (const BackendKind backend : {BackendKind::Cpu, BackendKind::OpenCl,
+                                    BackendKind::Cuda, BackendKind::Vulkan}) {
+    const auto limit = router.runtimeResolutionLimit(backend, Format::Jpeg);
+    if (!router.supports(backend, Format::Jpeg)) {
+      check(!limit && (limit.error().code == Status::BackendUnavailable ||
+                       limit.error().code == Status::UnsupportedFormat),
+            "unbuilt backend reports an explicit dynamic-limit error");
+      continue;
+    }
+    if (!limit) {
+      check(limit.error().code == Status::BackendUnavailable,
+            "unavailable backend reports backend-unavailable dynamic limit");
+      continue;
+    }
+    check(!limit->detail.empty(),
+          "runtime resolution limit always states its calculation basis");
+    if (limit->maxPixels != 0) {
+      check(limit->bytesPerPixel != 0,
+            "numeric runtime limit states bytes per pixel");
+      check(limit->availableBytes / limit->bytesPerPixel == limit->maxPixels,
+            "runtime pixels derive exactly from the reported budget");
+    }
+  }
+}
+
 void testJpeg2000CpuRoundtrip() {
   Router router;
   const Image source = makeImage(37, 23, 3);
@@ -1856,6 +1883,7 @@ void testTiffStripSharding() {
 int main() {
   testFormatCatalogAndProbe();
   testExecutionModeContract();
+  testRuntimeResolutionLimitContract();
   testJpeg2000CpuRoundtrip();
   testJpegXlCpuRoundtrip();
   testGpuHybridNewFormatRoundtrip();

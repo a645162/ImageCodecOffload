@@ -157,6 +157,19 @@ compression/filter）不在能力表里——它们是三个后端一直就有�
 CPU 表达，GPU lane 会被能力表挡掉而不是「照收但忽略」——这是刻意的：静默丢参数会产出
 「文件能打开、看着也正常，只有该有的 SOF2/Predictor/DPI 没了」的产物。
 
+## 动态分辨率上限
+
+`Router::runtimeResolutionLimit(backend, format)` 为设置页和任务调度提供当前机器的
+保守整图上限。结果不是伪精确的固定宽高，而是 `maxPixels`：图像可采用任意长宽比，
+只要总像素数不超过该值。CUDA、OpenCL、Vulkan 按当前设备的可用/预算显存及单次
+分配限制计算，统一假设最坏情况的 4 通道 8-bit 输入和一进一出两个 staging buffer，
+即 **8 B/像素**。结果同时返回 `availableBytes`、`bytesPerPixel` 和计算依据，UI
+必须原样说明这是随其它进程显存占用变化的保守预算。
+
+CPU 没有可移植、可靠的“当前可安全分配内存”计数器，因而会返回 `maxPixels=0` 和明确
+说明，而不是把 `SIZE_MAX` 冒充为机器实际可承载分辨率。未编译、无设备或不支持格式时
+返回结构化错误；调用方应显示原因，不能把它渲染为“无限制”。
+
 ## 构建
 
 依赖 libtiff / libpng / libjpeg-turbo（CPU 基线），OpenCL 与 CUDA 按需打开。

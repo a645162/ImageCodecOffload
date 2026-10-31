@@ -70,6 +70,12 @@ class Router {
   // probeBackends() 提供。
   ExecutionMode executionMode(BackendKind kind, Format format) const;
 
+  // 当前机器上某个后端的保守整图像素上限。该查询允许初始化对应设备，
+  // 因而只应由诊断/能力页或真正即将调度的任务调用，不能成为默认编码路径
+  // 的隐式副作用。
+  Result<RuntimeResolutionLimit> runtimeResolutionLimit(BackendKind kind,
+                                                        Format format) const;
+
   // 每个后端的可用性（含具体原因），供 CLI / 设置页展示。
   // 不做缓存：用户可能在两次调用之间装了驱动、退出了占显存的程序。
   std::vector<std::pair<BackendKind, std::string>> probeBackends() const;

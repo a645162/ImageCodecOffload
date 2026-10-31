@@ -115,6 +115,17 @@ enum class ExecutionMode {
 
 const char *executionModeName(ExecutionMode mode);
 
+// 当前机器/设备在本次查询时可承载的保守像素上限。它不是格式标准的固定
+// 宽高上限：显存会被其它进程占用，且可支持的长宽组合受 max-allocation
+// 限制影响。因此用像素数表达，并明确给出用于计算的设备预算和每像素字节数。
+// maxPixels == 0 表示后端无法提供可靠的动态上限，不表示没有上限。
+struct RuntimeResolutionLimit {
+  uint64_t maxPixels = 0;
+  uint64_t availableBytes = 0;
+  uint32_t bytesPerPixel = 0;
+  std::string detail;
+};
+
 // ---- 图像 ----
 // 统一用「紧凑、样本原样保留」表示：pixels 大小恒为 width*height*channels。
 // channels 的取值与 PNG 颜色类型一致：1 = 灰度、2 = 灰度+Alpha、3 = RGB、

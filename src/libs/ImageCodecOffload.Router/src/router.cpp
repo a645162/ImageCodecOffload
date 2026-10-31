@@ -244,6 +244,17 @@ ExecutionMode Router::executionMode(const BackendKind kind,
                             : backend->executionMode(format);
 }
 
+Result<RuntimeResolutionLimit>
+Router::runtimeResolutionLimit(const BackendKind kind, const Format format) const {
+  ICodecBackend *backend = find(kind);
+  if (backend == nullptr) {
+    return fail<RuntimeResolutionLimit>(
+        Status::BackendUnavailable,
+        std::string("backend not built: ") + backendName(kind));
+  }
+  return backend->runtimeResolutionLimit(format);
+}
+
 std::vector<std::pair<BackendKind, std::string>> Router::probeBackends() const {
   std::vector<std::pair<BackendKind, std::string>> out;
   out.reserve(backends_.size());

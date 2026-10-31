@@ -12,7 +12,9 @@
 #ifdef IMAGECODEC_OFFLOAD_WITH_OPENCL
 
 #include <OpenCLImageCodec/image_codec.h>
+#include <CL/cl.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -146,6 +148,67 @@ public:
     codec_ = codec;
     available_result_ = {};
     return available_result_;
+  }
+
+  Result<RuntimeResolutionLimit>
+  runtimeResolutionLimit(Format format) const override {
+    if (!supports(format)) {
+      return fail<RuntimeResolutionLimit>(
+          Status::UnsupportedFormat,
+          std::string("opencl: format not supported: ") + formatName(format));
+    }
+    if (const auto ready = available(); !ready) {
+      return std::unexpected(ready.error());
+    }
+
+    // OpenCLImageCodec uses device 0 from its shared OclDevice enumeration.
+    // Ask that exact first device for the two hard limits that constrain a
+    // whole-image staging round-trip: total global memory and one allocation.
+    cl_uint platform_count = 0;
+    if (clGetPlatformIDs(0, nullptr, &platform_count) != CL_SUCCESS ||
+        platform_count == 0) {
+      return fail<RuntimeResolutionLimit>(Status::BackendUnavailable,
+                                           "opencl: no platform for memory query");
+    }
+    std::vector<cl_platform_id> platforms(platform_count);
+    if (clGetPlatformIDs(platform_count, platforms.data(), nullptr) != CL_SUCCESS) {
+      return fail<RuntimeResolutionLimit>(Status::BackendUnavailable,
+                                           "opencl: platform enumeration failed");
+    }
+    cl_device_id device = nullptr;
+    for (const cl_platform_id platform : platforms) {
+      cl_uint device_count = 0;
+      if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr,
+                         &device_count) != CL_SUCCESS || device_count == 0) {
+        continue;
+      }
+      std::vector<cl_device_id> devices(device_count);
+      if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, device_count,
+                         devices.data(), nullptr) == CL_SUCCESS) {
+        device = devices.front();
+        break;
+      }
+    }
+    if (device == nullptr) {
+      return fail<RuntimeResolutionLimit>(Status::BackendUnavailable,
+                                           "opencl: no device for memory query");
+    }
+    cl_ulong global_memory = 0;
+    cl_ulong max_allocation = 0;
+    if (clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE,
+                        sizeof(global_memory), &global_memory, nullptr) != CL_SUCCESS ||
+        clGetDeviceInfo(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE,
+                        sizeof(max_allocation), &max_allocation, nullptr) != CL_SUCCESS) {
+      return fail<RuntimeResolutionLimit>(Status::BackendUnavailable,
+                                           "opencl: device memory query failed");
+    }
+    constexpr uint32_t kBytesPerPixel = 8;
+    const uint64_t usable = std::min<uint64_t>(
+        static_cast<uint64_t>(global_memory),
+        static_cast<uint64_t>(max_allocation) * 2);
+    return RuntimeResolutionLimit{
+        usable / kBytesPerPixel, usable, kBytesPerPixel,
+        "OpenCL global/max-allocation memory; conservative for two 4-channel staging buffers"};
   }
 
   Result<std::vector<uint8_t>> encode(Format format, const Image &image,
