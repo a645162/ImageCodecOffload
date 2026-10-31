@@ -44,6 +44,8 @@ endif()
 # 额外的工具链。CUDA / Vulkan 由使用方按机器显式打开。
 option(IMAGECODEC_OFFLOAD_WITH_OPENCL "Build the OpenCL backend (ImageCodecOpenCL)" ON)
 option(IMAGECODEC_OFFLOAD_WITH_VULKAN "Build the Vulkan backend (ImageCodecVulkan)" OFF)
+option(IMAGECODEC_OFFLOAD_WITH_OPENJPEG "Enable JPEG 2000 CPU support" ON)
+option(IMAGECODEC_OFFLOAD_WITH_JXL "Enable JPEG XL CPU support" ON)
 # ImageCodecPlatform：Windows / Linux 通用的平台抽象 + Intel 媒体引擎（oneVPL）
 # 硬件 JPEG + TIFF(JPEG strips) 容器。默认关闭：它依赖 libvpl 头文件子模块，
 # 且只有 Intel 核显机器才用得上；打开它不会改变路由后端表（见 docs/README.md）。
@@ -59,10 +61,14 @@ find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
-  pkg_check_modules(OPENJPEG_PC QUIET IMPORTED_TARGET libopenjp2)
-  pkg_check_modules(JXL_PC QUIET IMPORTED_TARGET libjxl)
+  if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+    pkg_check_modules(OPENJPEG_PC QUIET IMPORTED_TARGET libopenjp2)
+  endif()
+  if(IMAGECODEC_OFFLOAD_WITH_JXL)
+    pkg_check_modules(JXL_PC QUIET IMPORTED_TARGET libjxl)
+  endif()
 endif()
-if(NOT TARGET PkgConfig::OPENJPEG_PC)
+if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND NOT TARGET PkgConfig::OPENJPEG_PC)
   find_package(OpenJPEG CONFIG QUIET)
 endif()
 

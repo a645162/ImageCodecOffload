@@ -33,18 +33,18 @@ target_link_libraries(ImageCodecOffload.Cpu PUBLIC
   PNG::PNG
   JPEG::JPEG)
 
-if(TARGET OpenJPEG::OpenJPEG)
+if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND TARGET OpenJPEG::OpenJPEG)
   target_link_libraries(ImageCodecOffload.Cpu PUBLIC OpenJPEG::OpenJPEG)
   target_compile_definitions(ImageCodecOffload.Cpu PRIVATE IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
-elseif(TARGET openjp2_static OR TARGET openjp2)
+elseif(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND (TARGET openjp2_static OR TARGET openjp2))
   target_link_libraries(ImageCodecOffload.Cpu PUBLIC $<IF:$<TARGET_EXISTS:openjp2_static>,openjp2_static,openjp2>)
   target_compile_definitions(ImageCodecOffload.Cpu PRIVATE IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
-elseif(TARGET PkgConfig::OPENJPEG_PC)
+elseif(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND TARGET PkgConfig::OPENJPEG_PC)
   target_link_libraries(ImageCodecOffload.Cpu PUBLIC PkgConfig::OPENJPEG_PC)
   target_compile_definitions(ImageCodecOffload.Cpu PRIVATE IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
 endif()
 
-if(TARGET PkgConfig::JXL_PC)
+if(IMAGECODEC_OFFLOAD_WITH_JXL AND TARGET PkgConfig::JXL_PC)
   target_link_libraries(ImageCodecOffload.Cpu PUBLIC PkgConfig::JXL_PC)
   target_compile_definitions(ImageCodecOffload.Cpu PRIVATE IMAGECODEC_OFFLOAD_WITH_JXL=1)
 endif()

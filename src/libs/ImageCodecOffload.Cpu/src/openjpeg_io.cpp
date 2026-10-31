@@ -253,6 +253,8 @@ Result<Image> decodeJpeg2000(const uint8_t *data, size_t size) {
 } // namespace image_codec::offload::cpu
 #else
 
+} // namespace image_codec::offload::cpu
+
 namespace image_codec::offload::cpu {
 Result<std::vector<uint8_t>> encodeJpeg2000(const Image &, Format) {
   return fail<std::vector<uint8_t>>(Status::BackendUnavailable,
