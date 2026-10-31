@@ -2,6 +2,7 @@
 
 add_executable(ico_test ico_test.cpp)
 target_link_libraries(ico_test PRIVATE
+  ImageCodecOffload.Api
   ImageCodecOffload.Router
   ImageCodecOffload.Cpu
   ImageCodecOffload.Common)

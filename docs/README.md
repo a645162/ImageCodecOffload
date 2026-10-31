@@ -51,6 +51,16 @@ Vulkan 目前**没有任何 TIFF/PNG/JPEG 编解码与指标实现**，因此
 强制入口（`ico encode --backend opencl`、`Router::encodeWith`）**永不回退**：想看某个后端
 的真实表现时，回退只会让你看到另一个后端的结果。
 
+C API 上对应两个入口，**不要混用**：
+
+- `image_codec_offload_create(codec, preferred)` / `set_order(...)`：**优先**，永远保留 CPU 兜底。
+  适合「压一张图，谁快谁上」的单次调用。
+- `image_codec_offload_create_forced(codec, backend)`：**强制**，失败即失败。
+  适合「一条 lane = 一个后端」的并发调度（存图管线的 CPU lane 与 GPU lane 必须真的不同，
+  否则两条 lane 会在同一块设备上互抢显存，统计也不再可解释）。
+
+`set_order` 无法表达「只用 CPU」是刻意的：兜底不能丢。所以需要纯 CPU 时只能用 forced 入口。
+
 `Outcome::notes` 里是每一次回退的可读原因，`ico` 会原样打印：
 
 ```

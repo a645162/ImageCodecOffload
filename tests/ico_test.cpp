@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include <ImageCodecOffload/image_codec_offload.h>
+
 #include "bmp_io.h"
 #include "image_codec_types.h"
 #include "metrics.h"
@@ -282,9 +284,14 @@ void testJpegAlphaRejected() {
       const auto encoded = router.encodeWith(kind, Format::Jpeg, src, params);
       check(!encoded, "jpeg must reject images with an alpha sample");
       if (!encoded) {
-        check(encoded.error().code ==
-                  image_codec::offload::Status::InvalidArgument,
-              "jpeg alpha rejection is InvalidArgument");
+        // 未编进本构建的后端返回 BackendUnavailable：那不是「参数错了」，
+        // 只是这一单它根本没被叫到。CPU-only 构建下这条断言不该红。
+        if (encoded.error().code !=
+            image_codec::offload::Status::BackendUnavailable) {
+          check(encoded.error().code ==
+                    image_codec::offload::Status::InvalidArgument,
+                "jpeg alpha rejection is InvalidArgument");
+        }
         std::printf("jpeg %dch on %-6s: rejected (%s)\n", channels,
                     image_codec::offload::backendName(kind),
                     encoded.error().message.c_str());
@@ -633,6 +640,68 @@ void testFallbackLeavesReason() {
   }
 }
 
+// ---- 7. C API 的 forced 入口必须真的只用那一个后端 ----
+//
+// 为什么单独一条：`set_order` 会把 CPU 永远排到最后（兜底不能丢），于是
+// 「首选 CPU」实际仍会先跑 GPU。存图管线的一条 lane = 一个后端，CPU lane
+// 必须真的是 CPU，否则两条 lane 会在同一块设备上互抢显存、统计也失真。
+// 这里用一个「只有 CPU 会做」的组合（TIFF deflate）来区分两者。
+void testForcedBackendApi() {
+  const Image src = makeImage(64, 48, 3);
+
+  ico_image image{};
+  image.width = static_cast<uint32_t>(src.width);
+  image.height = static_cast<uint32_t>(src.height);
+  image.channels = static_cast<uint32_t>(src.channels);
+  image.stride = src.rowBytes();
+  image.data_size = src.pixels.size();
+  image.data = const_cast<uint8_t *>(src.pixels.data());
+
+  ico_encode_params params{};
+  params.tiff_compression = 8; // deflate：只有 CPU 后端支持
+
+  ico_codec *cpu = nullptr;
+  check(image_codec_offload_create_forced(&cpu, ICO_BACKEND_CPU) == ICO_OK,
+        "create_forced(cpu)");
+  if (cpu != nullptr) {
+    const size_t capacity = src.pixels.size() * 2;
+    std::vector<uint8_t> out(capacity);
+    size_t out_len = capacity;
+    const ico_status status =
+        image_codec_offload_encode(cpu, ICO_FORMAT_TIFF, &image, &params,
+                                   out.data(), &out_len, out.size());
+    check(status == ICO_OK, "forced cpu encodes tiff deflate");
+
+    int used = ICO_BACKEND_AUTO;
+    check(image_codec_offload_last_outcome(cpu, &used, nullptr, 0) == ICO_OK,
+          "forced cpu last_outcome");
+    check(used == ICO_BACKEND_CPU, "forced cpu really used cpu");
+
+    // 同一单在自动模式下必须换成「能用 GPU 就跑 GPU」的行为，但这里只验证
+    // forced 语义本身：CPU 能做的单，forced CPU 也必须能做，且不回退。
+    image_codec_offload_destroy(cpu);
+  }
+
+  // forced GPU 遇到「该后端不支持」必须失败，绝不换实现冒充。
+  ico_codec *opencl = nullptr;
+  check(image_codec_offload_create_forced(&opencl, ICO_BACKEND_OPENCL) ==
+            ICO_OK,
+        "create_forced(opencl)");
+  if (opencl != nullptr) {
+    std::vector<uint8_t> out(src.pixels.size() * 2);
+    size_t out_len = out.size();
+    const ico_status status =
+        image_codec_offload_encode(opencl, ICO_FORMAT_TIFF, &image, &params,
+                                   out.data(), &out_len, out.size());
+    check(status != ICO_OK, "forced opencl never swaps implementation");
+    if (status != ICO_OK) {
+      std::printf("forced opencl on tiff deflate: %s\n",
+                  image_codec_offload_status_string(status));
+    }
+    image_codec_offload_destroy(opencl);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -647,6 +716,7 @@ int main() {
   testBackendAgreement();
   testGrayChannelFidelity();
   testFallbackLeavesReason();
+  testForcedBackendApi();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "%d check(s) failed\n", g_failures);

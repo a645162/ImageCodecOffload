@@ -121,6 +121,18 @@ ICO_API const char *image_codec_offload_status_string(ico_status status);
 ICO_API ico_status image_codec_offload_create(ico_codec **out_codec,
                                               int preferred_backend);
 
+// 创建**强制**后端的编解码器：只使用该后端，失败即失败，绝不回退。
+//
+// 与 create()/set_order() 的差别只有「回退」这一件事，但缺了它就表达不了
+// 「这条 lane 只用 CPU」：set_order 会把 CPU 排到最后（兜底不能丢），于是
+// 首选 CPU 时实际仍先跑 GPU。多个 lane 并发编码时这会让 CPU lane 与 GPU lane
+// 变成同一个设备上的两条 lane：抢显存、统计混在一起、A/B 对比无从谈起。
+//
+// 使用场景：一条 lane = 一个后端（存图管线的 CPU/GPU 同时调度）。
+// 单次调用的场景仍应使用 create()，那里回退是优点。
+ICO_API ico_status image_codec_offload_create_forced(ico_codec **out_codec,
+                                                     int backend);
+
 // 销毁。NULL 安全。
 ICO_API void image_codec_offload_destroy(ico_codec *codec);
 

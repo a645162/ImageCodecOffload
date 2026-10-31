@@ -27,6 +27,12 @@ using image_codec::offload::Status;
 struct ico_codec {
   Router router;
 
+  // 强制后端（create_forced）：true 时所有调用只走 forced_kind，绝不回退。
+  // 声明为「是否强制 + 哪一个」，而不是把 router 的 order 改成单项——order 的
+  // 语义包含兜底，而强制模式的语义恰好是「不要兜底」，两者不能共用一条通路。
+  bool forced = false;
+  BackendKind forced_kind = BackendKind::Cpu;
+
   // 最近一次调用的诊断信息。不是线程安全的，与整套 API 的约定一致。
   int last_backend = ICO_BACKEND_AUTO;
   std::string last_detail;
@@ -217,6 +223,19 @@ ico_status image_codec_offload_create(ico_codec** out_codec,
   return ICO_OK;
 }
 
+ico_status image_codec_offload_create_forced(ico_codec** out_codec,
+                                             int backend) {
+  if (out_codec == nullptr) return ICO_ERR_INVALID_ARGUMENT;
+  *out_codec = nullptr;
+  if (backend == ICO_BACKEND_AUTO) return ICO_ERR_INVALID_ARGUMENT;
+
+  auto codec = std::make_unique<ico_codec>();
+  codec->forced = true;
+  codec->forced_kind = toBackendKind(backend);
+  *out_codec = codec.release();
+  return ICO_OK;
+}
+
 void image_codec_offload_destroy(ico_codec* codec) { delete codec; }
 
 ico_status image_codec_offload_set_order(ico_codec* codec, const int* kinds,
@@ -316,8 +335,13 @@ ico_status image_codec_offload_decode(ico_codec* codec, int format,
   }
 
   Outcome outcome;
-  const auto decoded = codec->router.decode(
-      fmt, static_cast<const uint8_t*>(in), in_len, &outcome);
+  const auto decoded =
+      codec->forced
+          ? codec->router.decodeWith(codec->forced_kind, fmt,
+                                     static_cast<const uint8_t*>(in), in_len)
+          : codec->router.decode(fmt, static_cast<const uint8_t*>(in), in_len,
+                                 &outcome);
+  if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!decoded) return mapStatus(decoded.error().code);
 
@@ -343,8 +367,12 @@ ico_status image_codec_offload_encode(ico_codec* codec, int format,
   if (!importImage(img, &image)) return ICO_ERR_INVALID_ARGUMENT;
 
   Outcome outcome;
-  const auto encoded =
-      codec->router.encode(fmt, image, toParams(params), &outcome);
+  const auto encoded = codec->forced
+                           ? codec->router.encodeWith(codec->forced_kind, fmt,
+                                                      image, toParams(params))
+                           : codec->router.encode(fmt, image,
+                                                  toParams(params), &outcome);
+  if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!encoded) return mapStatus(encoded.error().code);
 
@@ -381,7 +409,11 @@ ico_status image_codec_offload_metric_mse(ico_codec* codec, const ico_image* a,
   }
 
   Outcome outcome;
-  const auto value = codec->router.mse(ia, ib, &outcome);
+  const auto value =
+      codec->forced
+          ? codec->router.mseWith(codec->forced_kind, ia, ib)
+          : codec->router.mse(ia, ib, &outcome);
+  if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!value) return mapStatus(value.error().code);
 
@@ -403,7 +435,11 @@ ico_status image_codec_offload_metric_psnr(ico_codec* codec, const ico_image* a,
   }
 
   Outcome outcome;
-  const auto value = codec->router.psnr(ia, ib, &outcome);
+  const auto value =
+      codec->forced
+          ? codec->router.psnrWith(codec->forced_kind, ia, ib)
+          : codec->router.psnr(ia, ib, &outcome);
+  if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!value) return mapStatus(value.error().code);
 
@@ -423,7 +459,11 @@ ico_status image_codec_offload_metric_ssim(ico_codec* codec, const ico_image* a,
   }
 
   Outcome outcome;
-  const auto value = codec->router.ssim(ia, ib, &outcome);
+  const auto value =
+      codec->forced
+          ? codec->router.ssimWith(codec->forced_kind, ia, ib)
+          : codec->router.ssim(ia, ib, &outcome);
+  if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!value) return mapStatus(value.error().code);
 
