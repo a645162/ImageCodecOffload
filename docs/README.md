@@ -45,6 +45,11 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 | JPEG XL（JXL） | Hybrid：libjxl 码流 + CUDA staging | Hybrid：libjxl 码流 + OpenCL staging | Hybrid：libjxl 码流 + Vulkan staging | 编码/解码（libjxl） |
 | MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（要求 `shaderFloat64`，没有即明确失败并回退 CPU 指标） | 有（参考实现） |
 
+JPEG XL 的 CPU 码流实现显式使用 `libjxl_threads` 的线程 runner，并把编码 effort
+设为 3（libjxl 默认值为 7）。这只缩短 CPU 码流阶段，不改变默认的视觉质量距离，
+更不构成 Native GPU 编解码；未找到可选线程运行器的构建仍可用，但退回 libjxl
+单线程执行。
+
 Vulkan 后端的**分工刻意与 GPU 并行度对齐**：JPEG 的 DCT/IDCT、颜色变换、色度上下采样、
 PNG 行滤波与 TIFF Predictor=2 都是逐像素/逐行独立的工作，放在 GPU；JPEG 的 Huffman 位流、
 LZW 字典构建与 zlib deflate/inflate 严格串行，留在 CPU。`capabilities.tiff_lzw_gpu` 因此
