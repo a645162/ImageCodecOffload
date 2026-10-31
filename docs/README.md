@@ -41,7 +41,7 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 | JPEG | 编码/解码（nvJPEG，1 或 3 通道；2/4 明确拒绝） | 编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | 编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | 编码/解码（1 或 3 通道；2/4 明确拒绝） |
 | TIFF | 编码/解码（LZW/none，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道；Predictor=2 在 GPU，LZW 在 CPU） | 编码/解码（1/2/3/4 通道） |
 | PNG | 编码/解码（1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
-| MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（要求 `shaderFloat64`，申请不到即明确失败） | 有（参考实现） |
+| MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（要求 `shaderFloat64`，没有即明确失败并回退 CPU 指标） | 有（参考实现） |
 
 Vulkan 后端的**分工刻意与 GPU 并行度对齐**：JPEG 的 DCT/IDCT、颜色变换、色度上下采样、
 PNG 行滤波与 TIFF Predictor=2 都是逐像素/逐行独立的工作，放在 GPU；JPEG 的 Huffman 位流、
@@ -223,6 +223,10 @@ BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入）�
   （仅 Windows），不要复制其 Win32 handle/GL 导入实现。
 - Vulkan 着色器在 configure 阶段编译成 SPIR-V 再嵌入头文件（`cmake/spv_to_header.cmake`），
   `.spv` 是构建产物、不提交进仓库；**新增着色器必须重新 configure**。
+- `shaderFloat64` 只对**指标**是硬性要求：设备没有它时编解码照常（JPEG/PNG/TIFF 都是 fp32），
+  指标调用返回 `BackendUnavailable` 并附原因，由路由层回退 CPU 指标。只有核显的机器
+  （如 Intel UHD 770）因此仍然能用 Vulkan 编解码——`codec_api_test` 用
+  `argv[1]` / `VIC_TEST_DEVICE_INDEX` 指定设备来验证这条路径。
 - CUDA / OpenCL / Vulkan 与 CPU 参考的画质指标必须逐项给出**同一个数字**（golden 常量锁在
   `tests/ico_test.cpp`）。换后端不换数字，改公式就是改契约。
 - 子项目的 CMake 用 `PROJECT_SOURCE_DIR` 定位自己的 `include/`：
