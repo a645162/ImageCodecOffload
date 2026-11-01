@@ -237,6 +237,12 @@ bool Router::supports(const BackendKind kind, const Format format) const {
   return backend != nullptr && backend->supports(format);
 }
 
+bool Router::supports(const BackendKind kind, const Format format,
+                      const CodecDirection direction) const {
+  const auto *backend = find(kind);
+  return backend != nullptr && backend->supports(format, direction);
+}
+
 ExecutionMode Router::executionMode(const BackendKind kind,
                                     const Format format) const {
   const auto *backend = find(kind);
@@ -244,13 +250,21 @@ ExecutionMode Router::executionMode(const BackendKind kind,
                             : backend->executionMode(format);
 }
 
+ExecutionMode Router::executionMode(const BackendKind kind, const Format format,
+                                    const CodecDirection direction) const {
+  const auto *backend = find(kind);
+  return backend == nullptr ? ExecutionMode::Unavailable
+                            : backend->executionMode(format, direction);
+}
+
 Result<RuntimeResolutionLimit>
-Router::runtimeResolutionLimit(const BackendKind kind, const Format format) const {
+Router::runtimeResolutionLimit(const BackendKind kind,
+                               const Format format) const {
   ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
-    return fail<RuntimeResolutionLimit>(
-        Status::BackendUnavailable,
-        std::string("backend not built: ") + backendName(kind));
+    return fail<RuntimeResolutionLimit>(Status::BackendUnavailable,
+                                        std::string("backend not built: ") +
+                                            backendName(kind));
   }
   return backend->runtimeResolutionLimit(format);
 }

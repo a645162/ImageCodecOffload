@@ -86,7 +86,7 @@ bool toCApiImage(const Image &src, image_codec_vulkan_image *out) {
   return true;
 }
 
-Result<Image> fromCApiImage(const image_codec_vulkan_image& src) {
+Result<Image> fromCApiImage(const image_codec_vulkan_image &src) {
   Image out;
   out.width = static_cast<int>(src.width);
   out.height = static_cast<int>(src.height);
@@ -120,7 +120,8 @@ public:
         format == Format::Png) {
       return true;
     }
-#if defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG) && defined(IMAGECODEC_OFFLOAD_WITH_JXL)
+#if defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG) &&                               \
+    defined(IMAGECODEC_OFFLOAD_WITH_JXL)
     return format == Format::Jpeg2000 || format == Format::JpegXl;
 #elif defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
     return format == Format::Jpeg2000;
@@ -131,9 +132,16 @@ public:
 #endif
   }
 
+  bool supports(Format format, CodecDirection direction) const override {
+    if (!supports(format)) return false;
+    if (format == Format::Jpeg2000 || format == Format::JpegXl) return true;
+    if (const auto ready = available(); !ready) return true;
+    return directionReady(format, direction == CodecDirection::Encode);
+  }
+
   ExecutionMode executionMode(Format format) const override {
     return supports(format) ? ExecutionMode::HybridCpuGpu
-                             : ExecutionMode::Unavailable;
+                            : ExecutionMode::Unavailable;
   }
 
   Result<void> available() const override {
@@ -200,9 +208,10 @@ public:
       usable = std::min<uint64_t>(usable, memory.max_alloc_bytes * 2);
     }
     constexpr uint32_t kBytesPerPixel = 8;
-    return RuntimeResolutionLimit{
-        usable / kBytesPerPixel, usable, kBytesPerPixel,
-        "Vulkan free/budget memory; conservative for two 4-channel staging buffers"};
+    return RuntimeResolutionLimit{usable / kBytesPerPixel, usable,
+                                  kBytesPerPixel,
+                                  "Vulkan free/budget memory; conservative for "
+                                  "two 4-channel staging buffers"};
   }
 
   Result<std::vector<uint8_t>> encode(Format format, const Image &image,

@@ -46,14 +46,14 @@ struct Outcome {
 };
 
 class Router {
- public:
+public:
   // 注册所有被编译进来的后端（CPU 永远有），默认顺序来自
   // defaultOrder()。构造函数不探测设备：探测发生在第一次真正调用时。
   Router();
 
   ~Router();
-  Router(const Router&) = delete;
-  Router& operator=(const Router&) = delete;
+  Router(const Router &) = delete;
+  Router &operator=(const Router &) = delete;
 
   // 计算后端优先级（异构计算页可以改成别的顺序）。未知/未编译进来的项被忽略；
   // CPU 永远排在最后，避免配置错误把兜底也弄丢。
@@ -65,10 +65,14 @@ class Router {
 
   // 查询某个已构建后端是否声明支持指定格式；不触发设备探测。
   bool supports(BackendKind kind, Format format) const;
+  bool supports(BackendKind kind, Format format,
+                CodecDirection direction) const;
 
   // 返回后端对格式的实际执行模式，不触发设备探测；设备原因由
   // probeBackends() 提供。
   ExecutionMode executionMode(BackendKind kind, Format format) const;
+  ExecutionMode executionMode(BackendKind kind, Format format,
+                              CodecDirection direction) const;
 
   // 当前机器上某个后端的保守整图像素上限。该查询允许初始化对应设备，
   // 因而只应由诊断/能力页或真正即将调度的任务调用，不能成为默认编码路径
@@ -81,43 +85,43 @@ class Router {
   std::vector<std::pair<BackendKind, std::string>> probeBackends() const;
 
   // ---- 自动选择 + 回退 ----
-  Result<std::vector<uint8_t>> encode(Format format, const Image& image,
-                                     const EncodeParams& params,
-                                     Outcome* outcome = nullptr);
+  Result<std::vector<uint8_t>> encode(Format format, const Image &image,
+                                      const EncodeParams &params,
+                                      Outcome *outcome = nullptr);
 
   // 把 TIFF 的一段行独立压缩成一条 strip 的压缩流（分片并行用）。
   // 只考虑声明了 `tiff_strip_sharding` 的后端：其它后端做不到「与整图编码
   // 逐字节相同的片」。
-  Result<std::vector<uint8_t>> encodeTiffStrip(const Image& image,
+  Result<std::vector<uint8_t>> encodeTiffStrip(const Image &image,
                                                int first_row, int rows,
-                                               const EncodeParams& params,
-                                               Outcome* outcome = nullptr);
+                                               const EncodeParams &params,
+                                               Outcome *outcome = nullptr);
 
-  Result<Image> decode(Format format, const uint8_t* data, size_t size,
-                       Outcome* outcome = nullptr);
+  Result<Image> decode(Format format, const uint8_t *data, size_t size,
+                       Outcome *outcome = nullptr);
 
-  Result<double> mse(const Image& a, const Image& b,
-                     Outcome* outcome = nullptr);
-  Result<double> psnr(const Image& a, const Image& b,
-                      Outcome* outcome = nullptr);
-  Result<SsimResult> ssim(const Image& a, const Image& b,
-                          Outcome* outcome = nullptr);
+  Result<double> mse(const Image &a, const Image &b,
+                     Outcome *outcome = nullptr);
+  Result<double> psnr(const Image &a, const Image &b,
+                      Outcome *outcome = nullptr);
+  Result<SsimResult> ssim(const Image &a, const Image &b,
+                          Outcome *outcome = nullptr);
 
   // ---- 强制指定后端（对拍与调参用）----
   // 不回退：失败就返回失败原因。自动回退会把「CUDA 与 CPU 的数字不一样」
   // 这类问题变成「CUDA 悄悄没用上」，对拍就失去意义。
   Result<std::vector<uint8_t>> encodeWith(BackendKind kind, Format format,
-                                          const Image& image,
-                                          const EncodeParams& params);
+                                          const Image &image,
+                                          const EncodeParams &params);
   Result<std::vector<uint8_t>> encodeTiffStripWith(BackendKind kind,
-                                                   const Image& image,
+                                                   const Image &image,
                                                    int first_row, int rows,
-                                                   const EncodeParams& params);
-  Result<Image> decodeWith(BackendKind kind, Format format, const uint8_t* data,
+                                                   const EncodeParams &params);
+  Result<Image> decodeWith(BackendKind kind, Format format, const uint8_t *data,
                            size_t size);
-  Result<double> mseWith(BackendKind kind, const Image& a, const Image& b);
-  Result<double> psnrWith(BackendKind kind, const Image& a, const Image& b);
-  Result<SsimResult> ssimWith(BackendKind kind, const Image& a, const Image& b);
+  Result<double> mseWith(BackendKind kind, const Image &a, const Image &b);
+  Result<double> psnrWith(BackendKind kind, const Image &a, const Image &b);
+  Result<SsimResult> ssimWith(BackendKind kind, const Image &a, const Image &b);
 
   // 默认优先级：GPU 快的排前面，CPU 永远最后。
   static std::vector<BackendKind> defaultOrder();
@@ -137,20 +141,19 @@ class Router {
   // 某个后端能否表达这组参数。支持 → 返回空；不支持 → UnsupportedFormat
   // 并写清**具体是哪一项**，让上层日志能回答「为什么这条 lane 不接这一单」。
   Result<void> checkEncodeParams(BackendKind kind, Format format,
-                                 const EncodeParams& params) const;
+                                 const EncodeParams &params) const;
 
- private:
-  ICodecBackend* find(BackendKind kind) const;
+private:
+  ICodecBackend *find(BackendKind kind) const;
 
   // 依次尝试；supports 判断该后端是否接这一单，只有「后端不可用 / 不支持 /
   // 资源不足」才换下一个（见 router.cpp 的 retryable）。
-  template <class T, class Supports, class Fn>
-  Result<T> tryEach(const char* stage, Outcome* outcome, Supports&& supports,
-                    Fn&& fn);
+  template <class T, class Supports, class Fn> Result<T>
+  tryEach(const char *stage, Outcome *outcome, Supports &&supports, Fn &&fn);
 
   std::vector<std::unique_ptr<ICodecBackend>> backends_;
   std::vector<BackendKind> order_;
 };
 
-}  // namespace offload
-}  // namespace image_codec
+} // namespace offload
+} // namespace image_codec

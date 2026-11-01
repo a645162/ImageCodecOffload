@@ -19,7 +19,7 @@ namespace offload {
 namespace cpu {
 
 class CpuBackend final : public ICodecBackend {
- public:
+public:
   BackendKind kind() const override { return BackendKind::Cpu; }
 
   Result<void> available() const override { return {}; }
@@ -28,6 +28,11 @@ class CpuBackend final : public ICodecBackend {
     return format == Format::Jpeg || format == Format::Tiff ||
            format == Format::Png || format == Format::Jpeg2000 ||
            format == Format::JpegXl;
+  }
+
+  bool supports(Format format, CodecDirection) const override {
+    return supports(format) &&
+           executionMode(format) != ExecutionMode::Unavailable;
   }
 
   ExecutionMode executionMode(Format format) const override {
@@ -41,8 +46,8 @@ class CpuBackend final : public ICodecBackend {
     return ExecutionMode::Cpu;
   }
 
-  Result<std::vector<uint8_t>> encode(Format format, const Image& image,
-                                      const EncodeParams& params) override;
+  Result<std::vector<uint8_t>> encode(Format format, const Image &image,
+                                      const EncodeParams &params) override;
 
   // CPU 基线是「参数语义的参照实现」：所有进阶参数都在这里落地，GPU 后端
   // 逐项跟它对齐（或明确声明做不到）。因此这里恒为全支持——唯一例外是
@@ -50,17 +55,17 @@ class CpuBackend final : public ICodecBackend {
   EncodeCapabilities encodeCapabilities() const override;
 
   Result<std::vector<uint8_t>>
-  encodeTiffStrip(const Image& image, int first_row, int rows,
-                  const EncodeParams& params) override;
+  encodeTiffStrip(const Image &image, int first_row, int rows,
+                  const EncodeParams &params) override;
 
-  Result<Image> decode(Format format, const uint8_t* data,
+  Result<Image> decode(Format format, const uint8_t *data,
                        size_t size) override;
 
-  Result<double> mse(const Image& a, const Image& b) override;
-  Result<double> psnr(const Image& a, const Image& b) override;
-  Result<SsimResult> ssim(const Image& a, const Image& b) override;
+  Result<double> mse(const Image &a, const Image &b) override;
+  Result<double> psnr(const Image &a, const Image &b) override;
+  Result<SsimResult> ssim(const Image &a, const Image &b) override;
 };
 
-}  // namespace cpu
-}  // namespace offload
-}  // namespace image_codec
+} // namespace cpu
+} // namespace offload
+} // namespace image_codec

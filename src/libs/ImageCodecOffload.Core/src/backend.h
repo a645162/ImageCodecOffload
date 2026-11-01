@@ -42,9 +42,21 @@ public:
   // 「选了一个根本不会这格式的后端再失败」。
   virtual bool supports(Format format) const = 0;
 
+  // Direction-specific capability must not conflate a missing device with a
+  // missing codec direction; runtime availability is queried separately.
+  virtual bool supports(Format format, CodecDirection) const {
+    return supports(format);
+  }
+
   // 支持某格式时返回实际执行模式；未声明支持的格式必须返回 Unavailable。
   virtual ExecutionMode executionMode(Format format) const {
     return supports(format) ? ExecutionMode::Cpu : ExecutionMode::Unavailable;
+  }
+
+  virtual ExecutionMode executionMode(Format format,
+                                      CodecDirection direction) const {
+    return supports(format, direction) ? executionMode(format)
+                                       : ExecutionMode::Unavailable;
   }
 
   // 当前设备对整图路径的保守像素预算。默认实现只确认后端状态；没有可靠
@@ -60,8 +72,7 @@ public:
       return std::unexpected(ready.error());
     }
     return RuntimeResolutionLimit{
-        0, 0, 0,
-        "backend does not expose a reliable live memory budget"};
+        0, 0, 0, "backend does not expose a reliable live memory budget"};
   }
 
   virtual Result<std::vector<uint8_t>> encode(Format format, const Image &image,

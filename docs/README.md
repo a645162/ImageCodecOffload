@@ -45,6 +45,12 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 | JPEG XL（JXL） | Hybrid：libjxl 码流 + CUDA staging | Hybrid：libjxl 码流 + OpenCL staging | Hybrid：libjxl 码流 + Vulkan staging | 编码/解码（libjxl） |
 | MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（要求 `shaderFloat64`，没有即明确失败并回退 CPU 指标） | 有（参考实现） |
 
+能力查询按“格式 × 编码/解码方向 × 执行模式”表达。`Router::supports(kind, format, direction)`
+与 `executionMode(kind, format, direction)` 查询方向能力；设备是否就绪仍由
+`probeBackends()` 单独报告。因而设备缺失时可以同时显示“设备不可用”和“该方向已实现”，
+不会把运行时设备状态误报成格式/方向不支持。GPU 设备已就绪时，方向能力则依据后端实际能力表，
+例如缺少 nvJPEG 编码或解码的一侧会独立标记为不支持。
+
 JPEG XL 的 CPU 码流实现显式使用 `libjxl_threads` 的线程 runner，并把编码 effort
 设为 3（libjxl 默认值为 7）。这只缩短 CPU 码流阶段，不改变默认的视觉质量距离，
 更不构成 Native GPU 编解码；未找到可选线程运行器的构建仍可用，但退回 libjxl

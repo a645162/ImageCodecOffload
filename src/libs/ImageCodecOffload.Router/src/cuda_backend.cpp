@@ -32,63 +32,64 @@ namespace {
 
 Status mapStatus(image_codec_cuda_status status) {
   switch (status) {
-    case IMAGE_CODEC_CUDA_OK:
-      return Status::Ok;
-    case IMAGE_CODEC_CUDA_ERR_INVALID_ARGUMENT:
-      return Status::InvalidArgument;
-    case IMAGE_CODEC_CUDA_ERR_OUT_OF_MEMORY:
-      return Status::OutOfMemory;
-    case IMAGE_CODEC_CUDA_ERR_BACKEND_UNAVAILABLE:
-      return Status::BackendUnavailable;
-    case IMAGE_CODEC_CUDA_ERR_UNSUPPORTED_FORMAT:
-      return Status::UnsupportedFormat;
-    case IMAGE_CODEC_CUDA_ERR_DECODE_FAILED:
-      return Status::DecodeFailed;
-    case IMAGE_CODEC_CUDA_ERR_ENCODE_FAILED:
-      return Status::EncodeFailed;
-    case IMAGE_CODEC_CUDA_ERR_IO:
-      return Status::Io;
-    case IMAGE_CODEC_CUDA_ERR_INTERNAL:
-      return Status::Internal;
+  case IMAGE_CODEC_CUDA_OK:
+    return Status::Ok;
+  case IMAGE_CODEC_CUDA_ERR_INVALID_ARGUMENT:
+    return Status::InvalidArgument;
+  case IMAGE_CODEC_CUDA_ERR_OUT_OF_MEMORY:
+    return Status::OutOfMemory;
+  case IMAGE_CODEC_CUDA_ERR_BACKEND_UNAVAILABLE:
+    return Status::BackendUnavailable;
+  case IMAGE_CODEC_CUDA_ERR_UNSUPPORTED_FORMAT:
+    return Status::UnsupportedFormat;
+  case IMAGE_CODEC_CUDA_ERR_DECODE_FAILED:
+    return Status::DecodeFailed;
+  case IMAGE_CODEC_CUDA_ERR_ENCODE_FAILED:
+    return Status::EncodeFailed;
+  case IMAGE_CODEC_CUDA_ERR_IO:
+    return Status::Io;
+  case IMAGE_CODEC_CUDA_ERR_INTERNAL:
+    return Status::Internal;
   }
   return Status::Internal;
 }
 
-Error makeError(Status code, const char* stage, image_codec_cuda_status status) {
-  return Error{code, std::string("cuda: ") + stage + " failed: " +
-                         image_codec_cuda_status_string(status)};
+Error makeError(Status code, const char *stage,
+                image_codec_cuda_status status) {
+  return Error{code, std::string("cuda: ") + stage +
+                         " failed: " + image_codec_cuda_status_string(status)};
 }
 
 int toCudaFormat(Format format) {
   switch (format) {
-    case Format::Jpeg:
-      return IMAGE_CODEC_CUDA_FORMAT_JPEG;
-    case Format::Tiff:
-      return IMAGE_CODEC_CUDA_FORMAT_TIFF;
-    case Format::Png:
-      return IMAGE_CODEC_CUDA_FORMAT_PNG;
-    case Format::Unknown:
-      break;
+  case Format::Jpeg:
+    return IMAGE_CODEC_CUDA_FORMAT_JPEG;
+  case Format::Tiff:
+    return IMAGE_CODEC_CUDA_FORMAT_TIFF;
+  case Format::Png:
+    return IMAGE_CODEC_CUDA_FORMAT_PNG;
+  case Format::Unknown:
+    break;
   }
   return IMAGE_CODEC_CUDA_FORMAT_UNKNOWN;
 }
 
 // offload::Image -> image_codec_cuda_image（malloc，由 image_codec_cuda_image_free 释放）。
 // C ABI 没有借用语义，这一步必然复制整幅图。
-bool toCApiImage(const Image& src, image_codec_cuda_image* out) {
+bool toCApiImage(const Image &src, image_codec_cuda_image *out) {
   std::memset(out, 0, sizeof(*out));
   out->width = static_cast<uint32_t>(src.width);
   out->height = static_cast<uint32_t>(src.height);
   out->channels = static_cast<uint32_t>(src.channels);
   out->stride = src.rowBytes();
   out->data_size = src.pixels.size();
-  out->data = static_cast<uint8_t*>(std::malloc(out->data_size));
+  out->data = static_cast<uint8_t *>(std::malloc(out->data_size));
   if (out->data == nullptr) return false;
   std::memcpy(out->data, src.pixels.data(), out->data_size);
   return true;
 }
 
-Result<Image> fromCApiImage(const image_codec_cuda_image& src) {
+Result<Image> fromCApiImage(const image_codec_cuda_image &src) {
   Image out;
   out.width = static_cast<int>(src.width);
   out.height = static_cast<int>(src.height);
@@ -106,7 +107,7 @@ Result<Image> fromCApiImage(const image_codec_cuda_image& src) {
 }
 
 class CudaBackend final : public ICodecBackend {
- public:
+public:
   CudaBackend() = default;
 
   ~CudaBackend() override {
@@ -121,7 +122,8 @@ class CudaBackend final : public ICodecBackend {
         format == Format::Png) {
       return true;
     }
-#if defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG) && defined(IMAGECODEC_OFFLOAD_WITH_JXL)
+#if defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG) &&                               \
+    defined(IMAGECODEC_OFFLOAD_WITH_JXL)
     return format == Format::Jpeg2000 || format == Format::JpegXl;
 #elif defined(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
     return format == Format::Jpeg2000;
@@ -132,22 +134,29 @@ class CudaBackend final : public ICodecBackend {
 #endif
   }
 
+  bool supports(Format format, CodecDirection direction) const override {
+    if (!supports(format)) return false;
+    if (format == Format::Jpeg2000 || format == Format::JpegXl) return true;
+    if (const auto ready = available(); !ready) return true;
+    return directionReady(format, direction == CodecDirection::Encode);
+  }
+
   ExecutionMode executionMode(Format format) const override {
     return supports(format) ? ExecutionMode::HybridCpuGpu
-                             : ExecutionMode::Unavailable;
+                            : ExecutionMode::Unavailable;
   }
 
   Result<void> available() const override {
     if (available_checked_) return available_result_;
 
     available_checked_ = true;
-    image_codec_cuda_codec* codec = nullptr;
+    image_codec_cuda_codec *codec = nullptr;
     const image_codec_cuda_status st = image_codec_cuda_codec_create(&codec, 0);
     if (st != IMAGE_CODEC_CUDA_OK) {
-      available_result_ = fail<void>(
-          Status::BackendUnavailable,
-          std::string("cuda: no usable device (") +
-              image_codec_cuda_status_string(st) + ")");
+      available_result_ =
+          fail<void>(Status::BackendUnavailable,
+                     std::string("cuda: no usable device (") +
+                         image_codec_cuda_status_string(st) + ")");
       return available_result_;
     }
     codec_ = codec;
@@ -195,13 +204,14 @@ class CudaBackend final : public ICodecBackend {
     // Hybrid staging allocates one input and one output device image.  Four
     // 8-bit channels therefore need at most eight device bytes per pixel.
     constexpr uint32_t kBytesPerPixel = 8;
-    return RuntimeResolutionLimit{
-        usable / kBytesPerPixel, usable, kBytesPerPixel,
-        "CUDA free/budget memory; conservative for two 4-channel staging buffers"};
+    return RuntimeResolutionLimit{usable / kBytesPerPixel, usable,
+                                  kBytesPerPixel,
+                                  "CUDA free/budget memory; conservative for "
+                                  "two 4-channel staging buffers"};
   }
 
-  Result<std::vector<uint8_t>> encode(Format format, const Image& image,
-                                      const EncodeParams& params) override {
+  Result<std::vector<uint8_t>> encode(Format format, const Image &image,
+                                      const EncodeParams &params) override {
     if (!supports(format)) {
       return fail<std::vector<uint8_t>>(
           Status::UnsupportedFormat,
@@ -266,8 +276,7 @@ class CudaBackend final : public ICodecBackend {
           Status::OutOfMemory,
           "cuda: encode needs more device memory than available");
     }
-    if (st != IMAGE_CODEC_CUDA_ERR_OUT_OF_MEMORY &&
-        st != IMAGE_CODEC_CUDA_OK) {
+    if (st != IMAGE_CODEC_CUDA_ERR_OUT_OF_MEMORY && st != IMAGE_CODEC_CUDA_OK) {
       image_codec_cuda_image_free(&img);
       return std::unexpected(makeError(mapStatus(st), "encode", st));
     }
@@ -290,7 +299,7 @@ class CudaBackend final : public ICodecBackend {
     return out;
   }
 
-  Result<Image> decode(Format format, const uint8_t* data,
+  Result<Image> decode(Format format, const uint8_t *data,
                        size_t size) override {
     if (!supports(format)) {
       return fail<Image>(Status::UnsupportedFormat,
@@ -344,8 +353,8 @@ class CudaBackend final : public ICodecBackend {
       const size_t rows = static_cast<size_t>(out.height);
       const size_t copy = tight < img.stride ? tight : img.stride;
       for (size_t y = 0; y < rows; ++y) {
-        std::memcpy(out.pixels.data() + y * tight,
-                    img.data + y * img.stride, copy);
+        std::memcpy(out.pixels.data() + y * tight, img.data + y * img.stride,
+                    copy);
       }
     }
     image_codec_cuda_image_free(&img);
@@ -357,15 +366,15 @@ class CudaBackend final : public ICodecBackend {
     return out;
   }
 
-  Result<double> mse(const Image& a, const Image& b) override {
+  Result<double> mse(const Image &a, const Image &b) override {
     return scalarMetric(a, b, /*which=*/0);
   }
 
-  Result<double> psnr(const Image& a, const Image& b) override {
+  Result<double> psnr(const Image &a, const Image &b) override {
     return scalarMetric(a, b, /*which=*/1);
   }
 
-  Result<SsimResult> ssim(const Image& a, const Image& b) override {
+  Result<SsimResult> ssim(const Image &a, const Image &b) override {
     if (auto ok = available(); !ok) return std::unexpected(ok.error());
     if (auto ok = validatePair(a, b); !ok) return std::unexpected(ok.error());
 
@@ -395,24 +404,24 @@ class CudaBackend final : public ICodecBackend {
     return out;
   }
 
- private:
+private:
   // 能力表按「格式 + 方向」判断：nvJPEG 缺失只影响 JPEG，TIFF/PNG 仍然能跑。
   bool directionReady(Format format, bool encoding) const {
-    if (device_name_.empty()) return true;  // 能力查询失败：交给实际调用失败
+    if (device_name_.empty()) return true; // 能力查询失败：交给实际调用失败
     switch (format) {
-      case Format::Jpeg:
-        return encoding ? jpeg_encode_ : jpeg_decode_;
-      case Format::Tiff:
-        return encoding ? tiff_encode_ : tiff_decode_;
-      case Format::Png:
-        return encoding ? png_encode_ : png_decode_;
-      case Format::Unknown:
-        break;
+    case Format::Jpeg:
+      return encoding ? jpeg_encode_ : jpeg_decode_;
+    case Format::Tiff:
+      return encoding ? tiff_encode_ : tiff_decode_;
+    case Format::Png:
+      return encoding ? png_encode_ : png_decode_;
+    case Format::Unknown:
+      break;
     }
     return false;
   }
 
-  static Result<void> validatePair(const Image& a, const Image& b) {
+  static Result<void> validatePair(const Image &a, const Image &b) {
     if (!a.valid() || !b.valid()) {
       return fail<void>(Status::InvalidArgument, "cuda: invalid image");
     }
@@ -424,7 +433,7 @@ class CudaBackend final : public ICodecBackend {
     return {};
   }
 
-  Result<double> scalarMetric(const Image& a, const Image& b, int which) {
+  Result<double> scalarMetric(const Image &a, const Image &b, int which) {
     if (auto ok = available(); !ok) return std::unexpected(ok.error());
     if (auto ok = validatePair(a, b); !ok) return std::unexpected(ok.error());
 
@@ -454,7 +463,7 @@ class CudaBackend final : public ICodecBackend {
 
   mutable bool available_checked_ = false;
   mutable Result<void> available_result_ = {};
-  mutable image_codec_cuda_codec* codec_ = nullptr;
+  mutable image_codec_cuda_codec *codec_ = nullptr;
 
   // 能力表在第一次 available()（const）里探测并缓存，因此这些字段是 mutable：
   // 探测是幂等的读操作，不该逼调用方拿非 const 引用。
@@ -468,14 +477,14 @@ class CudaBackend final : public ICodecBackend {
   mutable bool png_encode_ = false;
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<ICodecBackend> makeCudaBackend() {
   return std::make_unique<CudaBackend>();
 }
 
-}  // namespace offload
-}  // namespace image_codec
+} // namespace offload
+} // namespace image_codec
 
 #else
 
@@ -484,7 +493,7 @@ namespace offload {
 
 std::unique_ptr<ICodecBackend> makeCudaBackend() { return nullptr; }
 
-}  // namespace offload
-}  // namespace image_codec
+} // namespace offload
+} // namespace image_codec
 
-#endif  // IMAGECODEC_OFFLOAD_WITH_CUDA
+#endif // IMAGECODEC_OFFLOAD_WITH_CUDA

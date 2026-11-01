@@ -27,6 +27,8 @@
 
 #include <ImageCodecOffload/image_codec_offload.h>
 
+#include <algorithm>
+
 #include "bmp_io.h"
 #include "image_codec_types.h"
 #include "jpegxl_io.h"
@@ -35,6 +37,7 @@
 #include "router.h"
 
 using image_codec::offload::BackendKind;
+using image_codec::offload::CodecDirection;
 using image_codec::offload::EncodeCapabilities;
 using image_codec::offload::EncodeParams;
 using image_codec::offload::ExecutionMode;
@@ -170,6 +173,85 @@ void testExecutionModeContract() {
             "gpu jpeg reports hybrid execution mode");
     }
   }
+}
+
+void testDirectionCapabilityContract() {
+  Router router;
+  for (const Format format : {Format::Jpeg, Format::Tiff, Format::Png}) {
+    check(router.supports(BackendKind::Cpu, format, CodecDirection::Decode),
+          "cpu advertises decode direction for legacy formats");
+    check(router.supports(BackendKind::Cpu, format, CodecDirection::Encode),
+          "cpu advertises encode direction for legacy formats");
+    check(router.executionMode(BackendKind::Cpu, format,
+                               CodecDirection::Decode) == ExecutionMode::Cpu,
+          "cpu decode direction reports cpu execution mode");
+    check(router.executionMode(BackendKind::Cpu, format,
+                               CodecDirection::Encode) == ExecutionMode::Cpu,
+          "cpu encode direction reports cpu execution mode");
+  }
+
+#ifdef IMAGECODEC_OFFLOAD_WITH_OPENJPEG
+  check(router.supports(BackendKind::Cpu, Format::Jpeg2000,
+                        CodecDirection::Decode),
+        "cpu jpeg2000 decode follows OpenJPEG build capability");
+  check(router.supports(BackendKind::Cpu, Format::Jpeg2000,
+                        CodecDirection::Encode),
+        "cpu jpeg2000 encode follows OpenJPEG build capability");
+#else
+  check(!router.supports(BackendKind::Cpu, Format::Jpeg2000,
+                         CodecDirection::Decode) &&
+            !router.supports(BackendKind::Cpu, Format::Jpeg2000,
+                             CodecDirection::Encode),
+        "cpu jpeg2000 directions are unavailable without OpenJPEG");
+#endif
+
+#ifdef IMAGECODEC_OFFLOAD_WITH_JXL
+  check(
+      router.supports(BackendKind::Cpu, Format::JpegXl, CodecDirection::Decode),
+      "cpu jpeg-xl decode follows libjxl build capability");
+  check(
+      router.supports(BackendKind::Cpu, Format::JpegXl, CodecDirection::Encode),
+      "cpu jpeg-xl encode follows libjxl build capability");
+#else
+  check(!router.supports(BackendKind::Cpu, Format::JpegXl,
+                         CodecDirection::Decode) &&
+            !router.supports(BackendKind::Cpu, Format::JpegXl,
+                             CodecDirection::Encode),
+        "cpu jpeg-xl directions are unavailable without libjxl");
+#endif
+
+  for (const BackendKind kind :
+       {BackendKind::OpenCl, BackendKind::Cuda, BackendKind::Vulkan}) {
+    for (const Format format : {Format::Jpeg, Format::Tiff, Format::Png}) {
+      if (!router.supports(kind, format)) continue;
+      const auto devices = router.probeBackends();
+      const auto device = std::find_if(
+          devices.begin(), devices.end(),
+          [kind](const auto &entry) { return entry.first == kind; });
+      check(device != devices.end(), "built gpu backend appears in probe list");
+      if (device == devices.end() || device->second != "ready") {
+        check(router.supports(kind, format, CodecDirection::Decode) &&
+                  router.supports(kind, format, CodecDirection::Encode),
+              "missing device does not erase implemented codec directions");
+        continue;
+      }
+
+      for (const CodecDirection direction :
+           {CodecDirection::Decode, CodecDirection::Encode}) {
+        const auto mode = router.executionMode(kind, format, direction);
+        check(router.supports(kind, format, direction) ==
+                  (mode != ExecutionMode::Unavailable),
+              "direction support and execution mode agree on ready gpu");
+      }
+    }
+  }
+
+  check(!router.supports(BackendKind::Cpu, Format::Unknown,
+                         CodecDirection::Decode) &&
+            router.executionMode(BackendKind::Cpu, Format::Unknown,
+                                 CodecDirection::Encode) ==
+                ExecutionMode::Unavailable,
+        "unknown format has no codec directions");
 }
 
 void testRuntimeResolutionLimitContract() {
@@ -2207,6 +2289,7 @@ void testTiffStripSharding() {
 int main() {
   testFormatCatalogAndProbe();
   testExecutionModeContract();
+  testDirectionCapabilityContract();
   testRuntimeResolutionLimitContract();
   testJpeg2000CpuRoundtrip();
   testJpeg2000RowStreaming();

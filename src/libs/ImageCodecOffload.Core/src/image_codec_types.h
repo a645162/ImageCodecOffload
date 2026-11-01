@@ -68,6 +68,11 @@ enum class Format {
   JpegXl = 5,
 };
 
+enum class CodecDirection {
+  Decode = 0,
+  Encode = 1,
+};
+
 const char *formatName(Format format);
 
 struct FormatDescriptor {
