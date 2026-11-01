@@ -271,16 +271,18 @@ ico backends                                    # 每个后端当前是否 ready
 ico info <file>                                 # 格式 / 尺寸 / 通道数（不解像素）
 ico encode <in> <out> [--quality N] [--compression N] [--tile N]
                       [--rows N] [--png-level N] [--png-filter N]
-                      [--backend cpu|opencl|cuda]
-ico decode <in> <out.bmp> [--backend cpu|opencl|cuda]
-ico compare <a> <b> [--backend cpu|opencl|cuda]  # 三后端的 MSE/PSNR/SSIM/MS-SSIM 并排
+                      [--backend cpu|opencl|cuda|vulkan]
+ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]
+ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]  # GPU 与 CPU 的 MSE/PSNR/SSIM/MS-SSIM 并排
 ```
 
 BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入），它不是目标格式。
 
 `ico matrix` 会实际生成并回读 `JPEG/TIFF/PNG/JP2/J2K/JPF/JPX/JXL` 的每一种
 目标后缀；manifest 用 `jpeg2000-jp2`、`jpeg2000-j2k`、`jpeg2000-jpf`、
-`jpeg2000-jpx` 分别记录。不要把 JPEG 2000 折叠成单个 `.jp2` 项：`.j2k` 是裸
+`jpeg2000-jpx` 分别记录。CSV 同时包含 `encode_mode` / `decode_mode`；这两列区分
+`native-gpu`、`hybrid-cpu-gpu`、`gpu-staging-only` 与 `cpu`，避免把 JP2/JXL 当前仅做的
+GPU 缓冲搬运统计成 GPU 编解码通过。不要把 JPEG 2000 折叠成单个 `.jp2` 项：`.j2k` 是裸
 codestream，其余三个是 JP2 容器家族，发布回归必须保留这四个独立产物。
 
 ## 约束

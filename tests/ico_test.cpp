@@ -167,6 +167,9 @@ void testExecutionModeContract() {
   check(std::string(image_codec::offload::executionModeName(
             ExecutionMode::HybridCpuGpu)) == "hybrid-cpu-gpu",
         "execution mode has stable display name");
+  check(std::string(image_codec::offload::executionModeName(
+            ExecutionMode::GpuStagingOnly)) == "gpu-staging-only",
+        "staging-only mode has stable display name");
   for (const BackendKind kind :
        {BackendKind::OpenCl, BackendKind::Cuda, BackendKind::Vulkan}) {
     if (!router.supports(kind, Format::Jpeg)) {

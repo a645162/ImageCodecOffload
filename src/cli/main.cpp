@@ -39,6 +39,7 @@
 namespace {
 
 using image_codec::offload::BackendKind;
+using image_codec::offload::CodecDirection;
 using image_codec::offload::EncodeParams;
 using image_codec::offload::Format;
 using image_codec::offload::Image;
@@ -70,6 +71,19 @@ bool writeFile(const std::string &path, const std::vector<uint8_t> &data,
 bool loadImage(Router &router, const std::string &path, Image *out,
                std::string *err);
 long long nowMicros();
+
+std::string csvField(const std::string &value) {
+  if (value.find_first_of(",\"\r\n") == std::string::npos) return value;
+  std::string escaped;
+  escaped.reserve(value.size() + 2);
+  escaped.push_back('"');
+  for (const char ch : value) {
+    if (ch == '"') escaped.push_back('"');
+    escaped.push_back(ch);
+  }
+  escaped.push_back('"');
+  return escaped;
+}
 
 uint16_t readLe16(const uint8_t *data) {
   return static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
@@ -277,7 +291,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
     std::fprintf(stderr, "error: cannot create matrix manifest\n");
     return 1;
   }
-  manifest << "backend,format,status,bytes,width,height,channels,elapsed_ms,error\n";
+  manifest << "backend,format,status,encode_mode,decode_mode,bytes,width,height,"
+              "channels,elapsed_ms,error\n";
 
   const std::vector<BackendKind> backends = {
       BackendKind::Cpu, BackendKind::OpenCl, BackendKind::Cuda,
@@ -308,6 +323,12 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
       const std::string backend_name =
           image_codec::offload::backendName(backend);
       const std::string format_name = matrix_format.name;
+      const std::string encode_mode = image_codec::offload::executionModeName(
+          router.executionMode(backend, matrix_format.format,
+                               CodecDirection::Encode));
+      const std::string decode_mode = image_codec::offload::executionModeName(
+          router.executionMode(backend, matrix_format.format,
+                               CodecDirection::Decode));
       const auto output = std::filesystem::path(output_dir) /
                           (backend_name + "-" + format_name + "." +
                            matrix_format.suffix);
@@ -325,7 +346,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
                              status == image_codec::offload::Status::UnsupportedFormat
                          ? "skipped"
                          : "failed")
-                 << ",0,0,0,0," << elapsed << ",\"" << escaped << "\"\n";
+                 << ',' << encode_mode << ',' << decode_mode
+                 << ",0,0,0,0," << elapsed << ',' << csvField(escaped) << '\n';
         if (status != image_codec::offload::Status::BackendUnavailable &&
             status != image_codec::offload::Status::UnsupportedFormat) {
           hard_failure = true;
@@ -334,8 +356,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
       }
       if (!writeFile(output.string(), *encoded, &error)) {
         manifest << backend_name << ',' << format_name
-                 << ",failed,0,0,0,0," << elapsed << ",\"" << error
-                 << "\"\n";
+                 << ",failed," << encode_mode << ',' << decode_mode
+                 << ",0,0,0,0," << elapsed << ',' << csvField(error) << '\n';
         hard_failure = true;
         continue;
       }
@@ -348,18 +370,21 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
             decoded ? "decoded geometry/channel mismatch"
                     : decoded.error().message;
         manifest << backend_name << ',' << format_name
-                 << ",failed," << encoded->size() << ",0,0,0," << elapsed
-                 << ",\"" << message << "\"\n";
+                 << ",failed," << encode_mode << ',' << decode_mode << ','
+                 << encoded->size() << ",0,0,0," << elapsed << ','
+                 << csvField(message) << '\n';
         hard_failure = true;
         continue;
       }
       manifest << backend_name << ',' << format_name << ",passed,"
-               << encoded->size() << ',' << decoded->width << ','
+               << encode_mode << ',' << decode_mode << ',' << encoded->size()
+               << ',' << decoded->width << ','
                << decoded->height << ',' << decoded->channels << ',' << elapsed
                << ",\"\"\n";
-      std::printf("matrix %-6s %-9s passed (%zu bytes, %.1f ms)\n",
-                  backend_name.c_str(), format_name.c_str(), encoded->size(),
-                  elapsed);
+      std::printf(
+          "matrix %-6s %-12s passed (encode=%s, decode=%s, %zu bytes, %.1f ms)\n",
+          backend_name.c_str(), format_name.c_str(), encode_mode.c_str(),
+          decode_mode.c_str(), encoded->size(), elapsed);
     }
   }
   return hard_failure ? 1 : 0;
