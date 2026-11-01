@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <string>
 #include <thread>
@@ -55,6 +56,32 @@ Image makeImage(int w, int h, int c);
 void testFormatCatalogAndProbe() {
   const auto &descriptors = image_codec::offload::formatDescriptors();
   check(descriptors.size() == 5, "format catalog has five formats");
+  const auto *jpeg2000 = image_codec::offload::formatDescriptor(Format::Jpeg2000);
+  check(jpeg2000 != nullptr, "jpeg2000 descriptor");
+  if (jpeg2000 != nullptr) {
+    check(jpeg2000->theoreticalMaxWidth ==
+              std::numeric_limits<uint32_t>::max() &&
+              jpeg2000->theoreticalMaxHeight ==
+                  std::numeric_limits<uint32_t>::max(),
+          "jpeg2000 exposes 32-bit container dimensions");
+    check(jpeg2000->implementationMaxWidth ==
+              static_cast<uint64_t>(std::numeric_limits<int>::max()) &&
+              jpeg2000->implementationMaxHeight ==
+                  static_cast<uint64_t>(std::numeric_limits<int>::max()),
+          "jpeg2000 is bounded by the public image model");
+  }
+  const auto *jpegXl = image_codec::offload::formatDescriptor(Format::JpegXl);
+  check(jpegXl != nullptr, "jpeg-xl descriptor");
+  if (jpegXl != nullptr) {
+    check(jpegXl->theoreticalMaxWidth == std::numeric_limits<uint32_t>::max() &&
+              jpegXl->theoreticalMaxHeight == std::numeric_limits<uint32_t>::max(),
+          "jpeg-xl exposes 32-bit container dimensions");
+    check(jpegXl->implementationMaxWidth ==
+              static_cast<uint64_t>(std::numeric_limits<int>::max()) &&
+              jpegXl->implementationMaxHeight ==
+                  static_cast<uint64_t>(std::numeric_limits<int>::max()),
+          "jpeg-xl is bounded by the public image model");
+  }
   check(image_codec::offload::formatFromExtension("JP2") == Format::Jpeg2000,
         "jp2 extension");
   check(image_codec::offload::formatFromExtension("jpf") == Format::Jpeg2000,

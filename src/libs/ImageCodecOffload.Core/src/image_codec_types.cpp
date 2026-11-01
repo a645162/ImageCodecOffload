@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 
 namespace image_codec {
 namespace offload {
@@ -58,6 +59,10 @@ const char* formatName(Format format) {
 }
 
 const std::vector<FormatDescriptor> &formatDescriptors() {
+  constexpr uint64_t kUint32Max = std::numeric_limits<uint32_t>::max();
+  // The public Image model stores geometry as signed int.  Do not advertise a
+  // codec/container coordinate range which this API cannot represent.
+  constexpr uint64_t kImageDimensionMax = std::numeric_limits<int>::max();
   static const std::vector<FormatDescriptor> descriptors = {
       {Format::Jpeg, "JPEG", "传统 JPEG（ISO/IEC 10918-1）。",
        {".jpg", ".jpeg", ".jpe"}, {"image/jpeg"}, 65535, 65535, 65535,
@@ -68,10 +73,12 @@ const std::vector<FormatDescriptor> &formatDescriptors() {
       {Format::Png, "PNG", "无损 PNG 图像。", {".png"}, {"image/png"}, 0,
        0, 0, 0, true, true, true, false, true},
       {Format::Jpeg2000, "JPEG 2000", "基于小波变换的 JPEG 2000。",
-       {".jp2", ".j2k", ".jpf", ".jpx"}, {"image/jp2", "image/jpx"}, 0,
-       0, 0, 0, true, true, true, true, true},
+       {".jp2", ".j2k", ".jpf", ".jpx"}, {"image/jp2", "image/jpx"},
+       kUint32Max, kUint32Max, kImageDimensionMax, kImageDimensionMax, true,
+       true, true, true, true},
       {Format::JpegXl, "JPEG XL", "新一代 JPEG XL 图像格式。", {".jxl"},
-       {"image/jxl"}, 0, 0, 0, 0, true, true, true, true, true},
+       {"image/jxl"}, kUint32Max, kUint32Max, kImageDimensionMax,
+       kImageDimensionMax, true, true, true, true, true},
   };
   return descriptors;
 }
