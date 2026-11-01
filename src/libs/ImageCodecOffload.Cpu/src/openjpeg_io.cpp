@@ -5,9 +5,11 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <chrono>
 
@@ -191,6 +193,122 @@ Result<std::vector<uint8_t>> encodeJpeg2000(const Image &image,
   return output;
 }
 
+Result<void> encodeJpeg2000Rows(const std::filesystem::path &path,
+                                const int width, const int height,
+                                const int channels,
+                                const Jpeg2000Container container,
+                                const Jpeg2000RowReader &rowReader) {
+  if (path.empty() || width <= 0 || height <= 0 ||
+      (channels != 1 && channels != 3) || !rowReader) {
+    return fail<void>(Status::InvalidArgument,
+                      "openjpeg: invalid streaming encode request");
+  }
+  constexpr size_t kMaxTileRows = 256;
+  const auto rowBytes = static_cast<size_t>(width) *
+                        static_cast<size_t>(channels);
+  if (rowBytes > std::numeric_limits<OPJ_UINT32>::max()) {
+    return fail<void>(Status::InvalidArgument,
+                      "openjpeg: streaming row exceeds tile API limit");
+  }
+  const auto maxRowsByTileApi =
+      static_cast<size_t>(std::numeric_limits<OPJ_UINT32>::max()) / rowBytes;
+  if (maxRowsByTileApi == 0) {
+    return fail<void>(Status::InvalidArgument,
+                      "openjpeg: streaming tile exceeds tile API limit");
+  }
+  const auto tileRows =
+      static_cast<int>(std::min(kMaxTileRows, maxRowsByTileApi));
+
+  opj_cparameters_t parameters;
+  opj_set_default_encoder_parameters(&parameters);
+  parameters.tcp_numlayers = 1;
+  parameters.cp_disto_alloc = 1;
+  parameters.numresolution = 1;
+  for (int dimension = std::min(width, height);
+       dimension > 1 && parameters.numresolution < 6; dimension >>= 1) {
+    ++parameters.numresolution;
+  }
+  // One tile spans the complete row width. This lets a non-seekable source
+  // deliver every row once while keeping the working set bounded by tileRows.
+  parameters.tile_size_on = OPJ_TRUE;
+  parameters.cp_tx0 = 0;
+  parameters.cp_ty0 = 0;
+  parameters.cp_tdx = width;
+  parameters.cp_tdy = tileRows;
+
+  std::array<opj_image_cmptparm_t, 3> components{};
+  for (int channel = 0; channel < channels; ++channel) {
+    components[channel].dx = 1;
+    components[channel].dy = 1;
+    components[channel].w = static_cast<OPJ_UINT32>(width);
+    components[channel].h = static_cast<OPJ_UINT32>(height);
+    components[channel].prec = 8;
+    components[channel].sgnd = 0;
+  }
+  auto *image = opj_image_tile_create(
+      static_cast<OPJ_UINT32>(channels), components.data(),
+      channels == 1 ? OPJ_CLRSPC_GRAY : OPJ_CLRSPC_SRGB);
+  if (image == nullptr) {
+    return fail<void>(Status::OutOfMemory,
+                      "openjpeg: streaming image allocation failed");
+  }
+  image->x0 = 0;
+  image->y0 = 0;
+  image->x1 = static_cast<OPJ_UINT32>(width);
+  image->y1 = static_cast<OPJ_UINT32>(height);
+
+  const bool rawCodestream = container == Jpeg2000Container::J2k;
+  auto *codec = makeCodec(rawCodestream ? Format::Unknown : Format::Jpeg2000,
+                          true);
+  auto *stream = codec == nullptr
+                     ? nullptr
+                     : opj_stream_create_default_file_stream(
+                           path.string().c_str(), OPJ_FALSE);
+  bool ok = codec != nullptr && stream != nullptr;
+  if (ok) ok = opj_setup_encoder(codec, &parameters, image) == OPJ_TRUE;
+  if (ok) ok = opj_start_compress(codec, image, stream) == OPJ_TRUE;
+
+  std::vector<uint8_t> row(rowBytes);
+  std::vector<uint8_t> tile;
+  for (int y = 0; ok && y < height; y += tileRows) {
+    const int rows = std::min(tileRows, height - y);
+    const auto pixels = static_cast<size_t>(width) * static_cast<size_t>(rows);
+    tile.assign(pixels * static_cast<size_t>(channels), 0);
+    for (int tileY = 0; ok && tileY < rows; ++tileY) {
+      auto read = rowReader(y + tileY, row);
+      if (!read) {
+        ok = false;
+        break;
+      }
+      for (int x = 0; x < width; ++x) {
+        const auto source = static_cast<size_t>(x) * channels;
+        const auto destination = static_cast<size_t>(tileY) * width + x;
+        for (int channel = 0; channel < channels; ++channel) {
+          tile[static_cast<size_t>(channel) * pixels + destination] =
+              row[source + channel];
+        }
+      }
+    }
+    if (ok) {
+      const auto tileIndex = static_cast<OPJ_UINT32>(y / tileRows);
+      ok = opj_write_tile(codec, tileIndex, tile.data(),
+                          static_cast<OPJ_UINT32>(tile.size()), stream) ==
+           OPJ_TRUE;
+    }
+  }
+  if (ok) ok = opj_end_compress(codec, stream) == OPJ_TRUE;
+  if (stream != nullptr) opj_stream_destroy(stream);
+  if (codec != nullptr) opj_destroy_codec(codec);
+  opj_image_destroy(image);
+  if (!ok) {
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    return fail<void>(Status::EncodeFailed,
+                      "openjpeg: streaming tile encode failed");
+  }
+  return {};
+}
+
 Result<Image> decodeJpeg2000(const uint8_t *data, size_t size) {
   if (data == nullptr || size == 0)
     return fail<Image>(Status::InvalidArgument, "openjpeg: empty input");
@@ -259,6 +377,11 @@ namespace image_codec::offload::cpu {
 Result<std::vector<uint8_t>> encodeJpeg2000(const Image &, Format) {
   return fail<std::vector<uint8_t>>(Status::BackendUnavailable,
                                     "openjpeg is not built");
+}
+Result<void> encodeJpeg2000Rows(const std::filesystem::path &, int, int, int,
+                                Jpeg2000Container,
+                                const Jpeg2000RowReader &) {
+  return fail<void>(Status::BackendUnavailable, "openjpeg is not built");
 }
 Result<Image> decodeJpeg2000(const uint8_t *, size_t) {
   return fail<Image>(Status::BackendUnavailable, "openjpeg is not built");

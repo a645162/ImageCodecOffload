@@ -16,6 +16,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <random>
 #include <string>
@@ -27,6 +29,7 @@
 #include "bmp_io.h"
 #include "image_codec_types.h"
 #include "metrics.h"
+#include "openjpeg_io.h"
 #include "router.h"
 
 using image_codec::offload::BackendKind;
@@ -223,6 +226,55 @@ void testJpeg2000CpuRoundtrip() {
                 decoded_j2k->channels == source.channels,
             "j2k codestream geometry");
     }
+  }
+}
+
+void testJpeg2000RowStreaming() {
+  constexpr int kWidth = 41;
+  constexpr int kHeight = 301;  // Crosses the 256-row tile boundary.
+  constexpr int kChannels = 3;
+  const Image source = makeImage(kWidth, kHeight, kChannels);
+  const auto path = std::filesystem::temp_directory_path() /
+                    "imagecodec-jpeg2000-row-streaming.jp2";
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
+  int rowsRead = 0;
+  const auto streamed = image_codec::offload::cpu::encodeJpeg2000Rows(
+      path, kWidth, kHeight, kChannels, Jpeg2000Container::Jp2,
+      [&source, &rowsRead](const int y, std::span<uint8_t> destination)
+          -> image_codec::offload::Result<void> {
+        if (y < 0 || y >= source.height ||
+            destination.size() != source.rowBytes()) {
+          return image_codec::offload::fail<void>(
+              Status::InvalidArgument, "test row callback received bad range");
+        }
+        std::copy_n(source.pixels.data() +
+                        static_cast<size_t>(y) * source.rowBytes(),
+                    source.rowBytes(), destination.data());
+        ++rowsRead;
+        return {};
+      });
+  if (!streamed) {
+    check(streamed.error().code == Status::BackendUnavailable,
+          "jpeg2000 streaming is available when OpenJPEG is built");
+    std::filesystem::remove(path, ignored);
+    return;
+  }
+  check(rowsRead == kHeight, "jpeg2000 streaming reads each row exactly once");
+
+  std::ifstream input(path, std::ios::binary);
+  const std::vector<uint8_t> encoded((std::istreambuf_iterator<char>(input)),
+                                     std::istreambuf_iterator<char>());
+  std::filesystem::remove(path, ignored);
+  check(!encoded.empty(), "jpeg2000 streaming produces a JP2 file");
+  Router router;
+  const auto decoded = router.decodeWith(BackendKind::Cpu, Format::Jpeg2000,
+                                         encoded.data(), encoded.size());
+  check(static_cast<bool>(decoded), "jpeg2000 streaming output decodes");
+  if (decoded) {
+    check(decoded->width == kWidth && decoded->height == kHeight &&
+              decoded->channels == kChannels,
+          "jpeg2000 streaming preserves geometry and channels");
   }
 }
 
@@ -1930,6 +1982,7 @@ int main() {
   testExecutionModeContract();
   testRuntimeResolutionLimitContract();
   testJpeg2000CpuRoundtrip();
+  testJpeg2000RowStreaming();
   testJpegXlCpuRoundtrip();
   testGpuHybridNewFormatRoundtrip();
   testBmpRoundtrip();
