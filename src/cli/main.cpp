@@ -56,7 +56,7 @@ void printUsage() {
       "                        [--compression N] [--tile N] [--rows N]\n"
       "                        [--png-level N] [--png-filter N]\n"
       "                        [--backend cpu|opencl|cuda|vulkan]\n"
-      "  ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k>\n"
+      "  ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k|out.jpf|out.jpx>\n"
       "  ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico matrix <input.bmp> <output-dir>\n"
