@@ -38,7 +38,7 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 
 | 格式 | CUDA | OpenCL | Vulkan | CPU |
 | --- | --- | --- | --- | --- |
-| JPEG | 编码/解码（nvJPEG，1 或 3 通道；2/4 明确拒绝） | 编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | 编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | 编码/解码（1 或 3 通道；2/4 明确拒绝） |
+| JPEG | Native GPU：编码/解码（nvJPEG，1 或 3 通道；2/4 明确拒绝） | Hybrid：编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | Hybrid：编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | CPU 编码/解码（1 或 3 通道；2/4 明确拒绝） |
 | TIFF | 编码/解码（LZW/none，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道；Predictor=2 在 GPU，LZW 在 CPU） | 编码/解码（1/2/3/4 通道） |
 | PNG | 编码/解码（1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
 | JPEG 2000（JP2/J2K/JPF/JPX） | Hybrid：OpenJPEG 码流 + CUDA staging | Hybrid：OpenJPEG 码流 + OpenCL staging | Hybrid：OpenJPEG 码流 + Vulkan staging | 编码/解码（OpenJPEG） |

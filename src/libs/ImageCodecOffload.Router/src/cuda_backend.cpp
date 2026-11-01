@@ -142,8 +142,11 @@ public:
   }
 
   ExecutionMode executionMode(Format format) const override {
-    return supports(format) ? ExecutionMode::HybridCpuGpu
-                            : ExecutionMode::Unavailable;
+    if (!supports(format)) return ExecutionMode::Unavailable;
+    // JPEG encode and decode are both handled end-to-end by nvJPEG/NVJPG.
+    // JP2/JXL use CPU bitstream codecs with CUDA staging; TIFF/PNG split work.
+    return format == Format::Jpeg ? ExecutionMode::NativeGpu
+                                  : ExecutionMode::HybridCpuGpu;
   }
 
   Result<void> available() const override {

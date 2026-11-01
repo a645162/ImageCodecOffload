@@ -174,9 +174,11 @@ void testExecutionModeContract() {
                 ExecutionMode::Unavailable,
             "unsupported gpu format reports unavailable mode");
     } else {
-      check(router.executionMode(kind, Format::Jpeg) ==
-                ExecutionMode::HybridCpuGpu,
-            "gpu jpeg reports hybrid execution mode");
+      const ExecutionMode expected = kind == BackendKind::Cuda
+                                         ? ExecutionMode::NativeGpu
+                                         : ExecutionMode::HybridCpuGpu;
+      check(router.executionMode(kind, Format::Jpeg) == expected,
+            "gpu jpeg reports its actual execution mode");
     }
   }
 }
@@ -595,6 +597,14 @@ void testJpegXlChunkedRowCapi() {
 void testGpuHybridNewFormatRoundtrip() {
   Router router;
   const Image source = makeImage(29, 17, 3);
+  if (router.supports(BackendKind::Cuda, Format::Jpeg)) {
+    for (const CodecDirection direction :
+         {CodecDirection::Decode, CodecDirection::Encode}) {
+      check(router.executionMode(BackendKind::Cuda, Format::Jpeg, direction) ==
+                ExecutionMode::NativeGpu,
+            "cuda jpeg reports native gpu for each supported direction");
+    }
+  }
   for (const BackendKind backend :
        {BackendKind::OpenCl, BackendKind::Cuda, BackendKind::Vulkan}) {
     for (const Format format : {Format::Jpeg2000, Format::JpegXl}) {
