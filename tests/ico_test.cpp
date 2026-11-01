@@ -94,6 +94,8 @@ void testFormatCatalogAndProbe() {
               jpeg2000->implementationMaxHeight ==
                   static_cast<uint64_t>(std::numeric_limits<int>::max()),
           "jpeg2000 is bounded by the public image model");
+    check(jpeg2000->streaming,
+          "jpeg2000 catalog reports the implemented tile streaming path");
   }
   const auto *jpegXl = image_codec::offload::formatDescriptor(Format::JpegXl);
   check(jpegXl != nullptr, "jpeg-xl descriptor");
@@ -106,6 +108,8 @@ void testFormatCatalogAndProbe() {
               jpegXl->implementationMaxHeight ==
                   static_cast<uint64_t>(std::numeric_limits<int>::max()),
           "jpeg-xl is bounded by the public image model");
+    check(!jpegXl->streaming,
+          "jpeg-xl catalog does not claim unsupported row streaming");
   }
   check(image_codec::offload::formatFromExtension("JP2") == Format::Jpeg2000,
         "jp2 extension");
