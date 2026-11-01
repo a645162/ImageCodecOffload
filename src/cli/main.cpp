@@ -28,11 +28,13 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <string>
 #include <vector>
 
 #include "ImageCodecOffload/image_codec_offload.h"
 #include "bmp_io.h"
+#include "metrics.h"
 #include "image_codec_types.h"
 #include "router.h"
 
@@ -110,16 +112,20 @@ struct Bmp24RowSource final {
                    std::string *error) {
     out->input.open(path, std::ios::binary);
     std::array<uint8_t, 54> header{};
-    if (!out->input.read(reinterpret_cast<char *>(header.data()), header.size())) {
+    if (!out->input.read(reinterpret_cast<char *>(header.data()),
+                         header.size())) {
       *error = "cannot read BMP header";
       return false;
     }
     const int32_t width = static_cast<int32_t>(readLe32(header.data() + 18));
-    const int32_t rawHeight = static_cast<int32_t>(readLe32(header.data() + 22));
+    const int32_t rawHeight =
+        static_cast<int32_t>(readLe32(header.data() + 22));
     const auto bitsPerPixel = readLe16(header.data() + 28);
-    if (header[0] != 'B' || header[1] != 'M' || readLe32(header.data() + 14) < 40 ||
-        width <= 0 || rawHeight == 0 || readLe16(header.data() + 26) != 1 ||
-        (bitsPerPixel != 8 && bitsPerPixel != 24) || readLe32(header.data() + 30) != 0) {
+    if (header[0] != 'B' || header[1] != 'M' ||
+        readLe32(header.data() + 14) < 40 || width <= 0 || rawHeight == 0 ||
+        readLe16(header.data() + 26) != 1 ||
+        (bitsPerPixel != 8 && bitsPerPixel != 24) ||
+        readLe32(header.data() + 30) != 0) {
       *error = "streaming only supports uncompressed 8-bit gray or 24-bit BMP";
       return false;
     }
@@ -127,7 +133,8 @@ struct Bmp24RowSource final {
     out->height = rawHeight > 0 ? rawHeight : -rawHeight;
     out->channels = bitsPerPixel == 8 ? 1 : 3;
     out->pixelOffset = readLe32(header.data() + 10);
-    out->stride = (static_cast<uint64_t>(width) * out->channels + 3U) & ~uint64_t{3};
+    out->stride =
+        (static_cast<uint64_t>(width) * out->channels + 3U) & ~uint64_t{3};
     out->bottomUp = rawHeight > 0;
     if (bitsPerPixel == 8) {
       if (out->pixelOffset < 54U + 256U * 4U) {
@@ -136,7 +143,8 @@ struct Bmp24RowSource final {
       }
       std::array<uint8_t, 256U * 4U> palette{};
       out->input.seekg(54);
-      if (!out->input.read(reinterpret_cast<char *>(palette.data()), palette.size())) {
+      if (!out->input.read(reinterpret_cast<char *>(palette.data()),
+                           palette.size())) {
         *error = "cannot read BMP grayscale palette";
         return false;
       }
@@ -157,8 +165,10 @@ struct Bmp24RowSource final {
 ico_status readBmp24StreamingRow(void *user, const int y, uint8_t *destination,
                                  const size_t destinationSize) {
   auto *source = static_cast<Bmp24RowSource *>(user);
-  if (source == nullptr || destination == nullptr || y < 0 || y >= source->height ||
-      destinationSize != static_cast<size_t>(source->width) * source->channels) {
+  if (source == nullptr || destination == nullptr || y < 0 ||
+      y >= source->height ||
+      destinationSize !=
+          static_cast<size_t>(source->width) * source->channels) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
   const int fileRow = source->bottomUp ? source->height - 1 - y : y;
@@ -184,14 +194,19 @@ ico_status readBmp24StreamingRow(void *user, const int y, uint8_t *destination,
   return ICO_OK;
 }
 
-int cmdEncodeStreamJpeg2000(const std::string &input, const std::string &output) {
+int cmdEncodeStreamJpeg2000(const std::string &input,
+                            const std::string &output) {
   const auto dot = output.find_last_of('.');
-  const auto extension = dot == std::string::npos ? std::string() : output.substr(dot);
+  const auto extension =
+      dot == std::string::npos ? std::string() : output.substr(dot);
   std::string lowered = extension;
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  if (lowered != ".jp2" && lowered != ".j2k" && lowered != ".jpf" && lowered != ".jpx") {
-    std::fprintf(stderr, "error: streaming output must use .jp2/.j2k/.jpf/.jpx\n");
+  std::transform(
+      lowered.begin(), lowered.end(), lowered.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (lowered != ".jp2" && lowered != ".j2k" && lowered != ".jpf" &&
+      lowered != ".jpx") {
+    std::fprintf(stderr,
+                 "error: streaming output must use .jp2/.j2k/.jpf/.jpx\n");
     return 1;
   }
   Bmp24RowSource source;
@@ -209,7 +224,8 @@ int cmdEncodeStreamJpeg2000(const std::string &input, const std::string &output)
   const auto start = nowMicros();
   const auto status = image_codec_offload_encode_jpeg2000_rows(
       codec, output.c_str(), source.width, source.height, source.channels,
-      lowered == ".j2k" ? ICO_JPEG2000_CONTAINER_J2K : ICO_JPEG2000_CONTAINER_JP2,
+      lowered == ".j2k" ? ICO_JPEG2000_CONTAINER_J2K
+                        : ICO_JPEG2000_CONTAINER_JP2,
       readBmp24StreamingRow, &source);
   image_codec_offload_destroy(codec);
   if (status != ICO_OK) {
@@ -223,15 +239,13 @@ int cmdEncodeStreamJpeg2000(const std::string &input, const std::string &output)
   return 0;
 }
 
-int cmdEncodeStreamJpegXl(const std::string &input,
-                          const std::string &output) {
+int cmdEncodeStreamJpegXl(const std::string &input, const std::string &output) {
   const auto dot = output.find_last_of('.');
-  std::string extension = dot == std::string::npos ? std::string()
-                                                    : output.substr(dot);
-  std::transform(extension.begin(), extension.end(), extension.begin(),
-                 [](unsigned char ch) {
-                   return static_cast<char>(std::tolower(ch));
-                 });
+  std::string extension =
+      dot == std::string::npos ? std::string() : output.substr(dot);
+  std::transform(
+      extension.begin(), extension.end(), extension.begin(),
+      [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
   if (extension != ".jxl") {
     std::fprintf(stderr, "error: streaming JPEG XL output must use .jxl\n");
     return 1;
@@ -243,8 +257,8 @@ int cmdEncodeStreamJpegXl(const std::string &input,
     return 1;
   }
   if (source.channels != 3) {
-    std::fprintf(stderr,
-                 "error: JPEG XL streaming currently requires 24-bit RGB BMP\n");
+    std::fprintf(
+        stderr, "error: JPEG XL streaming currently requires 24-bit RGB BMP\n");
     return 1;
   }
   ico_codec *codec = nullptr;
@@ -291,8 +305,11 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
     std::fprintf(stderr, "error: cannot create matrix manifest\n");
     return 1;
   }
-  manifest << "backend,format,status,encode_mode,decode_mode,bytes,width,height,"
-              "channels,elapsed_ms,error\n";
+  manifest
+      << "backend,format,status,encode_mode,decode_mode,bytes,width,height,"
+         "channels,codec_elapsed_ms,metrics_status,mse,psnr,ssim,"
+         "ms_ssim,metrics_elapsed_ms,error\n"
+      << std::setprecision(17);
 
   const std::vector<BackendKind> backends = {
       BackendKind::Cpu, BackendKind::OpenCl, BackendKind::Cuda,
@@ -323,20 +340,20 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
       const std::string backend_name =
           image_codec::offload::backendName(backend);
       const std::string format_name = matrix_format.name;
-      const std::string encode_mode = image_codec::offload::executionModeName(
-          router.executionMode(backend, matrix_format.format,
-                               CodecDirection::Encode));
-      const std::string decode_mode = image_codec::offload::executionModeName(
-          router.executionMode(backend, matrix_format.format,
-                               CodecDirection::Decode));
-      const auto output = std::filesystem::path(output_dir) /
-                          (backend_name + "-" + format_name + "." +
-                           matrix_format.suffix);
+      const std::string encode_mode =
+          image_codec::offload::executionModeName(router.executionMode(
+              backend, matrix_format.format, CodecDirection::Encode));
+      const std::string decode_mode =
+          image_codec::offload::executionModeName(router.executionMode(
+              backend, matrix_format.format, CodecDirection::Decode));
+      const auto output =
+          std::filesystem::path(output_dir) /
+          (backend_name + "-" + format_name + "." + matrix_format.suffix);
       const long long start = nowMicros();
       EncodeParams params;
       params.jpeg2000_container = matrix_format.jpeg2000Container;
-      auto encoded = router.encodeWith(backend, matrix_format.format, source,
-                                       params);
+      auto encoded =
+          router.encodeWith(backend, matrix_format.format, source, params);
       const double elapsed = static_cast<double>(nowMicros() - start) / 1000.0;
       if (!encoded) {
         const auto status = encoded.error().code;
@@ -346,23 +363,23 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
             status == image_codec::offload::Status::UnsupportedFormat ||
             status == image_codec::offload::Status::OutOfMemory;
         manifest << backend_name << ',' << format_name << ','
-                 << (skipped ? "skipped" : "failed")
-                 << ',' << encode_mode << ',' << decode_mode
-                 << ",0,0,0,0," << elapsed << ',' << csvField(escaped) << '\n';
+                 << (skipped ? "skipped" : "failed") << ',' << encode_mode
+                 << ',' << decode_mode << ",0,0,0,0," << elapsed
+                 << ",not-run,,,,,0," << csvField(escaped) << '\n';
         if (skipped) {
-          std::printf(
-              "matrix %-6s %-12s skipped (encode=%s, decode=%s): %s\n",
-              backend_name.c_str(), format_name.c_str(), encode_mode.c_str(),
-              decode_mode.c_str(), escaped.c_str());
+          std::printf("matrix %-6s %-12s skipped (encode=%s, decode=%s): %s\n",
+                      backend_name.c_str(), format_name.c_str(),
+                      encode_mode.c_str(), decode_mode.c_str(),
+                      escaped.c_str());
         } else {
           hard_failure = true;
         }
         continue;
       }
       if (!writeFile(output.string(), *encoded, &error)) {
-        manifest << backend_name << ',' << format_name
-                 << ",failed," << encode_mode << ',' << decode_mode
-                 << ",0,0,0,0," << elapsed << ',' << csvField(error) << '\n';
+        manifest << backend_name << ',' << format_name << ",failed,"
+                 << encode_mode << ',' << decode_mode << ",0,0,0,0," << elapsed
+                 << ",not-run,,,,,0," << csvField(error) << '\n';
         hard_failure = true;
         continue;
       }
@@ -371,25 +388,68 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
       if (!decoded || decoded->width != source.width ||
           decoded->height != source.height ||
           decoded->channels != source.channels) {
-        const std::string message =
-            decoded ? "decoded geometry/channel mismatch"
-                    : decoded.error().message;
-        manifest << backend_name << ',' << format_name
-                 << ",failed," << encode_mode << ',' << decode_mode << ','
-                 << encoded->size() << ",0,0,0," << elapsed << ','
+        const std::string message = decoded
+                                        ? "decoded geometry/channel mismatch"
+                                        : decoded.error().message;
+        manifest << backend_name << ',' << format_name << ",failed,"
+                 << encode_mode << ',' << decode_mode << ',' << encoded->size()
+                 << ",0,0,0," << elapsed << ',' << "not-run,,,,,0,"
                  << csvField(message) << '\n';
         hard_failure = true;
         continue;
       }
+      const long long metrics_start = nowMicros();
+      auto mse = router.mseWith(backend, source, *decoded);
+      auto ssim = router.ssimWith(backend, source, *decoded);
+      const double metrics_elapsed =
+          static_cast<double>(nowMicros() - metrics_start) / 1000.0;
+      const bool metrics_ok = mse && ssim;
+      std::string metrics_error;
+      const auto is_skippable_metric_error = [](const auto &error) {
+        return error.code == image_codec::offload::Status::BackendUnavailable ||
+               error.code == image_codec::offload::Status::UnsupportedFormat ||
+               error.code == image_codec::offload::Status::OutOfMemory;
+      };
+      if (!mse) {
+        metrics_error = mse.error().message;
+      }
+      if (!ssim) {
+        if (!metrics_error.empty()) metrics_error += "; ";
+        metrics_error += ssim.error().message;
+      }
+      const bool metrics_hard_failure =
+          (!mse && !is_skippable_metric_error(mse.error())) ||
+          (!ssim && !is_skippable_metric_error(ssim.error()));
+      const bool metrics_skipped = !metrics_ok && !metrics_hard_failure;
+      const char *metrics_status =
+          metrics_ok ? "passed" : (metrics_skipped ? "skipped" : "failed");
       manifest << backend_name << ',' << format_name << ",passed,"
                << encode_mode << ',' << decode_mode << ',' << encoded->size()
-               << ',' << decoded->width << ','
-               << decoded->height << ',' << decoded->channels << ',' << elapsed
-               << ",\"\"\n";
-      std::printf(
-          "matrix %-6s %-12s passed (encode=%s, decode=%s, %zu bytes, %.1f ms)\n",
-          backend_name.c_str(), format_name.c_str(), encode_mode.c_str(),
-          decode_mode.c_str(), encoded->size(), elapsed);
+               << ',' << decoded->width << ',' << decoded->height << ','
+               << decoded->channels << ',' << elapsed << ',' << metrics_status
+               << ',';
+      if (metrics_ok) {
+        manifest << *mse << ','
+                 << image_codec::offload::metrics::psnrFromMse(*mse) << ','
+                 << ssim->ssim << ',' << ssim->ms_ssim;
+      } else {
+        manifest << ",,,";
+        if (!metrics_skipped) hard_failure = true;
+      }
+      manifest << ',' << metrics_elapsed << ',' << csvField(metrics_error)
+               << '\n';
+      if (metrics_ok) {
+        std::printf("matrix %-6s %-12s passed (encode=%s, decode=%s, mse=%.9f, "
+                    "psnr=%.9f, ssim=%.9f, ms-ssim=%.9f, %.1f ms)\n",
+                    backend_name.c_str(), format_name.c_str(),
+                    encode_mode.c_str(), decode_mode.c_str(), *mse,
+                    image_codec::offload::metrics::psnrFromMse(*mse),
+                    ssim->ssim, ssim->ms_ssim, elapsed + metrics_elapsed);
+      } else {
+        std::printf("matrix %-6s %-12s codec=passed metrics=%s: %s\n",
+                    backend_name.c_str(), format_name.c_str(), metrics_status,
+                    metrics_error.c_str());
+      }
     }
   }
   return hard_failure ? 1 : 0;
@@ -635,10 +695,9 @@ int cmdEncode(const std::string &in, const std::string &out,
   EncodeParams effective_params = params;
   if (format == Format::Jpeg2000 && dot != std::string::npos) {
     std::string extension = out.substr(dot);
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char ch) {
-                     return static_cast<char>(std::tolower(ch));
-                   });
+    std::transform(
+        extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (extension == ".j2k") {
       effective_params.jpeg2000_container =
           image_codec::offload::Jpeg2000Container::J2k;
@@ -647,8 +706,9 @@ int cmdEncode(const std::string &in, const std::string &out,
 
   const long long t0 = nowMicros();
   image_codec::offload::Outcome outcome;
-  auto encoded = force ? router.encodeWith(kind, format, image, effective_params)
-                       : router.encode(format, image, effective_params, &outcome);
+  auto encoded = force
+                     ? router.encodeWith(kind, format, image, effective_params)
+                     : router.encode(format, image, effective_params, &outcome);
   const long long t1 = nowMicros();
 
   if (!encoded) {
