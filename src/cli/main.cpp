@@ -341,15 +341,20 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
       if (!encoded) {
         const auto status = encoded.error().code;
         const std::string escaped = encoded.error().message;
+        const bool skipped =
+            status == image_codec::offload::Status::BackendUnavailable ||
+            status == image_codec::offload::Status::UnsupportedFormat ||
+            status == image_codec::offload::Status::OutOfMemory;
         manifest << backend_name << ',' << format_name << ','
-                 << (status == image_codec::offload::Status::BackendUnavailable ||
-                             status == image_codec::offload::Status::UnsupportedFormat
-                         ? "skipped"
-                         : "failed")
+                 << (skipped ? "skipped" : "failed")
                  << ',' << encode_mode << ',' << decode_mode
                  << ",0,0,0,0," << elapsed << ',' << csvField(escaped) << '\n';
-        if (status != image_codec::offload::Status::BackendUnavailable &&
-            status != image_codec::offload::Status::UnsupportedFormat) {
+        if (skipped) {
+          std::printf(
+              "matrix %-6s %-12s skipped (encode=%s, decode=%s): %s\n",
+              backend_name.c_str(), format_name.c_str(), encode_mode.c_str(),
+              decode_mode.c_str(), escaped.c_str());
+        } else {
           hard_failure = true;
         }
         continue;

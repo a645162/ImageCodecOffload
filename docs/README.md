@@ -282,7 +282,8 @@ BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入）�
 目标后缀；manifest 用 `jpeg2000-jp2`、`jpeg2000-j2k`、`jpeg2000-jpf`、
 `jpeg2000-jpx` 分别记录。CSV 同时包含 `encode_mode` / `decode_mode`；这两列区分
 `native-gpu`、`hybrid-cpu-gpu`、`gpu-staging-only` 与 `cpu`，避免把 JP2/JXL 当前仅做的
-GPU 缓冲搬运统计成 GPU 编解码通过。不要把 JPEG 2000 折叠成单个 `.jp2` 项：`.j2k` 是裸
+GPU 缓冲搬运统计成 GPU 编解码通过。后端不可用、方向/格式不支持和资源不足都以
+`skipped` 及具体原因记录；真正的编解码或校验错误仍返回失败。不要把 JPEG 2000 折叠成单个 `.jp2` 项：`.j2k` 是裸
 codestream，其余三个是 JP2 容器家族，发布回归必须保留这四个独立产物。
 
 ## 约束
