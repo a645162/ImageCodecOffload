@@ -16,44 +16,44 @@
 namespace image_codec {
 namespace offload {
 
-const char* statusName(Status status) {
+const char *statusName(Status status) {
   switch (status) {
-    case Status::Ok:
-      return "ok";
-    case Status::InvalidArgument:
-      return "invalid-argument";
-    case Status::OutOfMemory:
-      return "out-of-memory";
-    case Status::BackendUnavailable:
-      return "backend-unavailable";
-    case Status::UnsupportedFormat:
-      return "unsupported-format";
-    case Status::DecodeFailed:
-      return "decode-failed";
-    case Status::EncodeFailed:
-      return "encode-failed";
-    case Status::Io:
-      return "io";
-    case Status::Internal:
-      return "internal";
+  case Status::Ok:
+    return "ok";
+  case Status::InvalidArgument:
+    return "invalid-argument";
+  case Status::OutOfMemory:
+    return "out-of-memory";
+  case Status::BackendUnavailable:
+    return "backend-unavailable";
+  case Status::UnsupportedFormat:
+    return "unsupported-format";
+  case Status::DecodeFailed:
+    return "decode-failed";
+  case Status::EncodeFailed:
+    return "encode-failed";
+  case Status::Io:
+    return "io";
+  case Status::Internal:
+    return "internal";
   }
   return "unknown";
 }
 
-const char* formatName(Format format) {
+const char *formatName(Format format) {
   switch (format) {
-    case Format::Jpeg:
-      return "jpeg";
-    case Format::Tiff:
-      return "tiff";
-    case Format::Png:
-      return "png";
-    case Format::Jpeg2000:
-      return "jpeg2000";
-    case Format::JpegXl:
-      return "jpeg-xl";
-    case Format::Unknown:
-      break;
+  case Format::Jpeg:
+    return "jpeg";
+  case Format::Tiff:
+    return "tiff";
+  case Format::Png:
+    return "png";
+  case Format::Jpeg2000:
+    return "jpeg2000";
+  case Format::JpegXl:
+    return "jpeg-xl";
+  case Format::Unknown:
+    break;
   }
   return "unknown";
 }
@@ -64,21 +64,81 @@ const std::vector<FormatDescriptor> &formatDescriptors() {
   // codec/container coordinate range which this API cannot represent.
   constexpr uint64_t kImageDimensionMax = std::numeric_limits<int>::max();
   static const std::vector<FormatDescriptor> descriptors = {
-      {Format::Jpeg, "JPEG", "传统 JPEG（ISO/IEC 10918-1）。",
-       {".jpg", ".jpeg", ".jpe"}, {"image/jpeg"}, 65535, 65535, 65535,
-       65535, true, true, true, false, true},
-      {Format::Tiff, "TIFF", "支持条带和瓦片布局的 TIFF 容器。",
-       {".tif", ".tiff"}, {"image/tiff"}, 0, 0, 0, 0, true, true, true,
-       true, true},
-      {Format::Png, "PNG", "无损 PNG 图像。", {".png"}, {"image/png"}, 0,
-       0, 0, 0, true, true, true, false, true},
-      {Format::Jpeg2000, "JPEG 2000", "基于小波变换的 JPEG 2000。",
-       {".jp2", ".j2k", ".jpf", ".jpx"}, {"image/jp2", "image/jpx"},
-       kUint32Max, kUint32Max, kImageDimensionMax, kImageDimensionMax, true,
-       true, true, true, true},
-      {Format::JpegXl, "JPEG XL", "新一代 JPEG XL 图像格式。", {".jxl"},
-       {"image/jxl"}, kUint32Max, kUint32Max, kImageDimensionMax,
-       kImageDimensionMax, true, true, true, true, true},
+      {Format::Jpeg,
+       "JPEG",
+       "传统 JPEG（ISO/IEC 10918-1）。",
+       {".jpg", ".jpeg", ".jpe"},
+       {"image/jpeg"},
+       65535,
+       65535,
+       65535,
+       65535,
+       true,
+       true,
+       true,
+       false,
+       false,
+       false},
+      {Format::Tiff,
+       "TIFF",
+       "支持条带和瓦片布局的 TIFF 容器。",
+       {".tif", ".tiff"},
+       {"image/tiff"},
+       0,
+       0,
+       0,
+       0,
+       true,
+       true,
+       true,
+       true,
+       false,
+       true},
+      {Format::Png,
+       "PNG",
+       "无损 PNG 图像。",
+       {".png"},
+       {"image/png"},
+       0,
+       0,
+       0,
+       0,
+       true,
+       true,
+       true,
+       false,
+       false,
+       false},
+      {Format::Jpeg2000,
+       "JPEG 2000",
+       "基于小波变换的 JPEG 2000。",
+       {".jp2", ".j2k", ".jpf", ".jpx"},
+       {"image/jp2", "image/jpx"},
+       kUint32Max,
+       kUint32Max,
+       kImageDimensionMax,
+       kImageDimensionMax,
+       true,
+       true,
+       true,
+       true,
+       false,
+       true},
+      {Format::JpegXl,
+       "JPEG XL",
+       "新一代 JPEG XL 图像格式。",
+       {".jxl"},
+       {"image/jxl"},
+       kUint32Max,
+       kUint32Max,
+       kImageDimensionMax,
+       kImageDimensionMax,
+       true,
+       true,
+       true,
+       true,
+       false,
+       true},
   };
   return descriptors;
 }
@@ -110,35 +170,35 @@ Format formatFromExtension(std::string_view extension) {
   return Format::Unknown;
 }
 
-const char* backendName(BackendKind kind) {
+const char *backendName(BackendKind kind) {
   switch (kind) {
-    case BackendKind::Cpu:
-      return "cpu";
-    case BackendKind::OpenCl:
-      return "opencl";
-    case BackendKind::Cuda:
-      return "cuda";
-    case BackendKind::Vulkan:
-      return "vulkan";
+  case BackendKind::Cpu:
+    return "cpu";
+  case BackendKind::OpenCl:
+    return "opencl";
+  case BackendKind::Cuda:
+    return "cuda";
+  case BackendKind::Vulkan:
+    return "vulkan";
   }
   return "unknown";
 }
 
-const char* executionModeName(ExecutionMode mode) {
+const char *executionModeName(ExecutionMode mode) {
   switch (mode) {
-    case ExecutionMode::Unavailable:
-      return "unavailable";
-    case ExecutionMode::Cpu:
-      return "cpu";
-    case ExecutionMode::HybridCpuGpu:
-      return "hybrid-cpu-gpu";
-    case ExecutionMode::NativeGpu:
-      return "native-gpu";
+  case ExecutionMode::Unavailable:
+    return "unavailable";
+  case ExecutionMode::Cpu:
+    return "cpu";
+  case ExecutionMode::HybridCpuGpu:
+    return "hybrid-cpu-gpu";
+  case ExecutionMode::NativeGpu:
+    return "native-gpu";
   }
   return "unavailable";
 }
 
-Format probeFormat(const uint8_t* data, size_t size) {
+Format probeFormat(const uint8_t *data, size_t size) {
   if (data == nullptr) return Format::Unknown;
 
   // PNG: 89 50 4E 47 0D 0A 1A 0A
@@ -162,10 +222,10 @@ Format probeFormat(const uint8_t* data, size_t size) {
 
   // TIFF: little-endian "II*\0" / big-endian "MM\0*"
   if (size >= 4) {
-    const bool le = data[0] == 'I' && data[1] == 'I' && data[2] == 0x2A &&
-                    data[3] == 0x00;
-    const bool be = data[0] == 'M' && data[1] == 'M' && data[2] == 0x00 &&
-                    data[3] == 0x2A;
+    const bool le =
+        data[0] == 'I' && data[1] == 'I' && data[2] == 0x2A && data[3] == 0x00;
+    const bool be =
+        data[0] == 'M' && data[1] == 'M' && data[2] == 0x00 && data[3] == 0x2A;
     if (le || be) return Format::Tiff;
   }
 
@@ -191,5 +251,5 @@ Format probeFormat(const uint8_t* data, size_t size) {
   return Format::Unknown;
 }
 
-}  // namespace offload
-}  // namespace image_codec
+} // namespace offload
+} // namespace image_codec

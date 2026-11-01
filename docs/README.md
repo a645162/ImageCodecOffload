@@ -51,6 +51,10 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 不会把运行时设备状态误报成格式/方向不支持。GPU 设备已就绪时，方向能力则依据后端实际能力表，
 例如缺少 nvJPEG 编码或解码的一侧会独立标记为不支持。
 
+格式目录中的流式能力也按方向记录。当前 TIFF 条带输出、JPEG 2000 tile 行输入与 JPEG XL
+chunked 行输入均属于编码能力；不能据此推导这些格式支持流式解码。JP2/JXL 解码目前仍走整图
+缓冲 API，相关大图峰值与限制须按实际测试结果描述。
+
 JPEG XL 的 CPU 码流实现显式使用 `libjxl_threads` 的线程 runner，并把编码 effort
 设为 3（libjxl 默认值为 7）。这只缩短 CPU 码流阶段，不改变默认的视觉质量距离，
 更不构成 Native GPU 编解码；未找到可选线程运行器的构建仍可用，但退回 libjxl

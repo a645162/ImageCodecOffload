@@ -89,7 +89,8 @@ struct FormatDescriptor {
   bool encode = false;
   bool metadata = false;
   bool tiled = false;
-  bool streaming = false;
+  bool decodeStreaming = false;
+  bool encodeStreaming = false;
 };
 
 const std::vector<FormatDescriptor> &formatDescriptors();
