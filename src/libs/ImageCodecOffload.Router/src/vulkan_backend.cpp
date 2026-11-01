@@ -217,6 +217,31 @@ public:
                                   "two 4-channel staging buffers"};
   }
 
+  Result<MemoryUsage> memoryUsage() const override {
+    if (const auto ready = available(); !ready) {
+      return std::unexpected(ready.error());
+    }
+    image_codec_vulkan_memory_info memory{};
+    const auto status = image_codec_vulkan_get_memory_info(codec_, &memory);
+    if (status != IMAGE_CODEC_VULKAN_OK) {
+      return fail<MemoryUsage>(mapStatus(status),
+                               std::string("vulkan: memory query failed: ") +
+                                   image_codec_vulkan_status_string(status));
+    }
+    MemoryUsage usage;
+    usage.reported = true;
+    usage.total_bytes = memory.total_bytes;
+    usage.free_bytes = memory.free_bytes;
+    // Vulkan 后端每次操作内部临时建设备，句柄不持有显存，used/peak 恒为 0。
+    // 这里如实转述 C API 的说明，避免报告把 0 读成「这一格没用显存」。
+    usage.used_bytes = memory.used_bytes;
+    usage.peak_bytes = memory.peak_bytes;
+    usage.detail =
+        "Vulkan: codec handle holds no device memory (per-operation device); "
+        "used/peak are always 0 by design";
+    return usage;
+  }
+
   Result<std::vector<uint8_t>> encode(Format format, const Image &image,
                                       const EncodeParams &params) override {
     if (!supports(format)) {

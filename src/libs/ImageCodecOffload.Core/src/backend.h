@@ -31,6 +31,17 @@ public:
 
   virtual BackendKind kind() const = 0;
 
+  // 后端句柄的显存用量快照，供**诊断与矩阵报告**使用，不参与任何路由决策。
+  //
+  // 为什么不给个 uint64_t 默认 0：0 在报告里是「这一格没占显存」，而
+  // 「这个后端根本不跟踪句柄占用」是另一个结论。把两者混成一个数字，报告
+  // 就会凭空长出一排看着很漂亮的 0。因此用 reported 明确区分，并带 detail。
+  virtual Result<MemoryUsage> memoryUsage() const {
+    return fail<MemoryUsage>(Status::BackendUnavailable,
+                             "backend does not expose per-handle memory "
+                             "counters");
+  }
+
   // 后端是否可用。返回失败时 message 必须写清具体原因
   // （「没有可用设备」「本构建未包含该后端」「驱动不支持 fp64」...），
   // 上层据此回退并记录，绝不允许只看到「回退到 CPU」而说不出为什么。

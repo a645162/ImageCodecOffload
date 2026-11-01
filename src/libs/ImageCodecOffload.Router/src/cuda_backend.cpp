@@ -217,6 +217,28 @@ public:
                                   "two 4-channel staging buffers"};
   }
 
+  Result<MemoryUsage> memoryUsage() const override {
+    if (const auto ready = available(); !ready) {
+      return std::unexpected(ready.error());
+    }
+    image_codec_cuda_memory_info memory{};
+    const auto status = image_codec_cuda_get_memory_info(codec_, &memory);
+    if (status != IMAGE_CODEC_CUDA_OK) {
+      return fail<MemoryUsage>(mapStatus(status),
+                               std::string("cuda: memory query failed: ") +
+                                   image_codec_cuda_status_string(status));
+    }
+    MemoryUsage usage;
+    usage.reported = true;
+    usage.total_bytes = memory.total_bytes;
+    usage.free_bytes = memory.free_bytes;
+    usage.used_bytes = memory.used_bytes;
+    usage.peak_bytes = memory.peak_bytes;
+    usage.detail =
+        "CUDA: used/peak are this codec handle's own device allocations";
+    return usage;
+  }
+
   Result<std::vector<uint8_t>> encode(Format format, const Image &image,
                                       const EncodeParams &params) override {
     if (!supports(format)) {

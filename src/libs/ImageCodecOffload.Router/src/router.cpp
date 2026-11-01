@@ -269,6 +269,16 @@ Router::runtimeResolutionLimit(const BackendKind kind,
   return backend->runtimeResolutionLimit(format);
 }
 
+Result<MemoryUsage> Router::memoryUsage(const BackendKind kind) const {
+  ICodecBackend *backend = find(kind);
+  if (backend == nullptr) {
+    return fail<MemoryUsage>(Status::BackendUnavailable,
+                             std::string("backend not built: ") +
+                                 backendName(kind));
+  }
+  return backend->memoryUsage();
+}
+
 std::vector<std::pair<BackendKind, std::string>> Router::probeBackends() const {
   std::vector<std::pair<BackendKind, std::string>> out;
   out.reserve(backends_.size());

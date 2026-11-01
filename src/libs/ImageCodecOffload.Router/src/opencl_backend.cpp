@@ -214,6 +214,19 @@ public:
         "OpenCL global/max-allocation memory; conservative for two 4-channel staging buffers"};
   }
 
+  // OpenCLImageCodec 的 C API 没有单句柄计量：设备总量能查，但「本句柄
+  // 当前/峰值占了多少」查不到。宁可报「未提供」，也不把设备总量当成占用
+  // 填进报告——那会让一份矩阵报告凭空多出 24 GB 的「占用」。
+  Result<MemoryUsage> memoryUsage() const override {
+    if (const auto ready = available(); !ready) {
+      return std::unexpected(ready.error());
+    }
+    return fail<MemoryUsage>(
+        Status::BackendUnavailable,
+        "opencl: the C API exposes no per-handle memory counters (device "
+        "total only)");
+  }
+
   Result<std::vector<uint8_t>> encode(Format format, const Image &image,
                                       const EncodeParams &params) override {
     if (!supports(format)) {

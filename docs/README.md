@@ -274,7 +274,9 @@ ico encode <in> <out> [--quality N] [--compression N] [--tile N]
                       [--backend cpu|opencl|cuda|vulkan]
 ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]
 ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]  # GPU 与 CPU 的 MSE/PSNR/SSIM/MS-SSIM 并排
-ico matrix <input.bmp> <output-dir>                    # 编码、回读及逐格质量指标
+ico matrix <input.bmp> <output-dir>
+                      [--only-backend cpu|opencl|cuda|vulkan]...  # 与 matrix-metrics 同一套过滤
+                      [--only-format jpeg|tiff|png|jpeg2000-jp2|...]...
 ico matrix-metrics <input.bmp> <artifacts-dir> <report-dir>
                       [--only-backend cpu|opencl|cuda|vulkan]...  # 逗号分隔或重复给出
                       [--only-format jpeg|tiff|png|jpeg2000-jp2|...]...
@@ -292,6 +294,20 @@ GPU 缓冲搬运统计成 GPU 编解码通过。每格同时记录 MSE、PSNR、
 CSV 的 `metrics_status` 将资源/能力跳过与真实指标错误区分开。后端不可用、方向/格式不支持和资源不足都以
 `skipped` 及具体原因记录；真正的编解码或校验错误仍返回失败。不要把 JPEG 2000 折叠成单个 `.jp2` 项：`.j2k` 是裸
 codestream，其余三个是 JP2 容器家族，发布回归必须保留这四个独立产物。
+
+**逐格资源峰值**（`host_rss_peak_mb` / `device_peak_mb`）：前者是该格期间后台线程每 10 ms 采样的
+**进程 RSS 峰值**——包含此前各格已经分配且未释放的常驻内存，所以它是「这一格的进程水位」而不是
+「本格增量」。后者取自后端句柄自报的历史峰值：CUDA 真实统计、Vulkan 恒 0（句柄每次操作临时建设备，
+不持显存）、OpenCL 的 C API 不提供单句柄计量。**测不到就写空字段，绝不写 0**——0 在报告里读作
+「这一格没占显存」，与「这个后端不提供计数」是两个完全不同的结论。
+
+实测价值：`Merge.bmp` 上 CUDA 的 `jpeg`（Native GPU）在这一格被记为
+`skipped: cuda: encode needs more device memory than available`，同一行 `device_peak_mb`
+是 1799.6 MiB——报告第一次能同时说明「哪一格没做成」和「它把显存顶到了多少」。
+
+**过滤**：两条矩阵命令共用 `--only-backend` / `--only-format`，只补某一格时不必重跑整张表。
+拼错的格式名在读图之前报错（否则会先把 1.9 GB 的图读进内存再失败）。`matrix` 每次都整份重写，
+`--resume` 只对 `matrix-metrics` 有效，传给 `matrix` 会直接报错而不是被静默忽略。
 
 `matrix-metrics` 不重编码、不改写 `artifacts-dir` 中的既有文件，适合给耗时较长的大图矩阵补算质量指标；它单独输出 manifest。缺少产物和本次未构建的后端记为 `skipped`，文件系统错误、解码错误和非资源类指标错误令命令失败。
 

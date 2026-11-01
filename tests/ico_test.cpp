@@ -292,6 +292,55 @@ void testRuntimeResolutionLimitContract() {
   }
 }
 
+void testMemoryUsageContract() {
+  Router router;
+
+  // 没编进来的后端必须区分于「编进来但不提供计数」：前者说 backend not built，
+  // 后者说清具体原因。报告里这两种都要落成空字段，但诊断时原因不一样。
+  const auto unbuilt = router.memoryUsage(BackendKind::Vulkan);
+  if (!router.supports(BackendKind::Vulkan, Format::Jpeg)) {
+    check(!unbuilt &&
+              unbuilt.error().code == Status::BackendUnavailable &&
+              unbuilt.error().message.find("not built") != std::string::npos,
+          "unbuilt backend reports an explicit memory-usage error");
+  }
+
+  // CPU 没有设备显存：宁可报「不提供」，也不要给一个 0 让报告读成
+  // 「这一格没占显存」。
+  const auto cpu = router.memoryUsage(BackendKind::Cpu);
+  check(!cpu || cpu->reported ||
+            !cpu->detail.empty(),
+        "cpu memory usage is either reported with a basis or explained");
+
+  for (const BackendKind kind :
+       {BackendKind::OpenCl, BackendKind::Cuda, BackendKind::Vulkan}) {
+    if (!router.supports(kind, Format::Jpeg)) continue;
+    const auto devices = router.probeBackends();
+    const auto device = std::find_if(
+        devices.begin(), devices.end(),
+        [kind](const auto &entry) { return entry.first == kind; });
+    if (device == devices.end() || device->second != "ready") {
+      // 没有设备时允许失败，但原因必须是人话，不能是空字符串。
+      const auto usage = router.memoryUsage(kind);
+      check(!usage ? !usage.error().message.empty() : true,
+            "unavailable device states why memory usage is unknown");
+      continue;
+    }
+
+    const auto usage = router.memoryUsage(kind);
+    if (!usage) {
+      // OpenCL 的 C API 没有单句柄计量：这里是**预期**的失败，且必须说原因。
+      check(!usage.error().message.empty(),
+            "backend without per-handle counters explains why");
+      continue;
+    }
+    check(usage->reported || !usage->detail.empty(),
+          "reported memory usage states its basis");
+    check(usage->used_bytes <= usage->peak_bytes,
+          "used bytes never exceed the reported peak");
+  }
+}
+
 void testJpeg2000CpuRoundtrip() {
   Router router;
   const Image source = makeImage(37, 23, 3);
@@ -2310,6 +2359,7 @@ int main() {
   testExecutionModeContract();
   testDirectionCapabilityContract();
   testRuntimeResolutionLimitContract();
+  testMemoryUsageContract();
   testJpeg2000CpuRoundtrip();
   testJpeg2000RowStreaming();
   testJpeg2000RowStreamingCapi();

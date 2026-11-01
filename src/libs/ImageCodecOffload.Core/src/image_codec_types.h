@@ -134,6 +134,23 @@ struct RuntimeResolutionLimit {
   std::string detail;
 };
 
+// 后端句柄的显存用量快照（诊断 / 矩阵报告用，不参与路由决策）。
+//
+// reported 单独存在是刻意的：`used_bytes == 0` 在报告里意味着「这一格确实
+// 没占显存」，而「这个后端根本不跟踪单句柄占用」是另一个结论。两者混成
+// 一个数字，报告里就会凭空长出一排漂亮的 0。
+struct MemoryUsage {
+  bool reported = false;
+  // 设备总量与当前空闲（驱动视角，可能含其它进程占用；0 = 驱动/后端不提供）。
+  uint64_t total_bytes = 0;
+  uint64_t free_bytes = 0;
+  // 本句柄当前占用与其历史峰值（CUDA 真实统计；Vulkan 恒 0，见其 C 头说明）。
+  uint64_t used_bytes = 0;
+  uint64_t peak_bytes = 0;
+  // reported == false 时的具体原因，或 reported == true 时的口径说明。
+  std::string detail;
+};
+
 // ---- 图像 ----
 // 统一用「紧凑、样本原样保留」表示：pixels 大小恒为 width*height*channels。
 // channels 的取值与 PNG 颜色类型一致：1 = 灰度、2 = 灰度+Alpha、3 = RGB、

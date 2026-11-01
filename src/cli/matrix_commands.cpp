@@ -82,7 +82,7 @@ const std::vector<BackendKind> &matrixBackends() {
 constexpr const char *kMatrixHeader =
     "backend,format,status,encode_mode,decode_mode,bytes,width,height,"
     "channels,codec_elapsed_ms,metrics_status,mse,psnr,ssim,"
-    "ms_ssim,metrics_elapsed_ms,error\n";
+    "ms_ssim,metrics_elapsed_ms,host_rss_peak_mb,device_peak_mb,error\n";
 
 constexpr const char *kMetricsHeader =
     "backend,format,status,encode_mode,decode_mode,bytes,width,height,"
@@ -284,6 +284,15 @@ void printUnknownFormats(const std::vector<std::string> &requested) {
   std::fprintf(stderr, "\n");
 }
 
+// manifest 里的资源列：没测到就写**空字段**，不能写 0。0 在报告里读作
+// 「这一格没占内存」，与「这个后端不提供计数」是完全不同的结论。
+std::string megaBytesOrEmpty(const uint64_t bytes) {
+  if (bytes == 0) return {};
+  std::ostringstream text;
+  text << std::setprecision(17) << (static_cast<double>(bytes) / (1024.0 * 1024.0));
+  return text.str();
+}
+
 } // namespace
 
 int cmdMatrix(const std::string &input, const std::string &output_dir,
@@ -342,6 +351,27 @@ int cmdMatrix(const std::string &input, const std::string &output_dir,
       const auto output =
           std::filesystem::path(output_dir) /
           (backend_name + "-" + format_name + "." + matrix_format->suffix);
+      // 资源峰值必须**在格子内**采样：1.9 GB 的帧峰值出现在编码过程中
+      // （源 + 中转 + 产物同时在手），格子结束再看一眼只会看到已经回落的数字。
+      // device_peak_mb 取后端句柄自报的历史峰值：CUDA 真实统计、Vulkan 恒 0
+      // （句柄不持显存）、OpenCL 不提供——后两者写空字段而不是 0。
+      HostPeakSampler host_sampler;
+      host_sampler.start();
+      bool resources_done = false;
+      std::string resource_fields;
+      const auto finish_resources = [&]() -> const std::string & {
+        if (!resources_done) {
+          resources_done = true;
+          uint64_t device_peak = 0;
+          if (const auto usage = router.memoryUsage(backend); usage) {
+            device_peak = usage->peak_bytes;
+          }
+          resource_fields = "," + megaBytesOrEmpty(host_sampler.stop()) + "," +
+                            megaBytesOrEmpty(device_peak);
+        }
+        return resource_fields;
+      };
+
       const long long start = nowMicros();
       EncodeParams params;
       params.jpeg2000_container = matrix_format->jpeg2000_container;
@@ -358,7 +388,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir,
         manifest << backend_name << ',' << format_name << ','
                  << (skipped ? "skipped" : "failed") << ',' << encode_mode
                  << ',' << decode_mode << ",0,0,0,0," << elapsed
-                 << ",not-run,,,,,0," << csvField(escaped) << '\n';
+                 << ",not-run,,,,,0" << finish_resources() << ','
+                 << csvField(escaped) << '\n';
         // 大图矩阵一跑就是几十分钟，中途被终止时已完成的格子必须留在盘上。
         manifest.flush();
         if (skipped) {
@@ -374,7 +405,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir,
       if (!writeFile(output.string(), *encoded, &error)) {
         manifest << backend_name << ',' << format_name << ",failed,"
                  << encode_mode << ',' << decode_mode << ",0,0,0,0," << elapsed
-                 << ",not-run,,,,,0," << csvField(error) << '\n';
+                 << ",not-run,,,,,0" << finish_resources() << ','
+                 << csvField(error) << '\n';
         manifest.flush();
         hard_failure = true;
         continue;
@@ -389,8 +421,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir,
                                         : decoded.error().message;
         manifest << backend_name << ',' << format_name << ",failed,"
                  << encode_mode << ',' << decode_mode << ',' << encoded->size()
-                 << ",0,0,0," << elapsed << ',' << "not-run,,,,,0,"
-                 << csvField(message) << '\n';
+                 << ",0,0,0," << elapsed << ',' << "not-run,,,,,0"
+                 << finish_resources() << ',' << csvField(message) << '\n';
         manifest.flush();
         hard_failure = true;
         continue;
@@ -428,8 +460,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir,
         manifest << ",,,";
         if (!metrics_skipped) hard_failure = true;
       }
-      manifest << ',' << metrics_elapsed << ',' << csvField(metrics_error)
-               << '\n';
+      manifest << ',' << metrics_elapsed << finish_resources() << ','
+               << csvField(metrics_error) << '\n';
       manifest.flush();
       if (metrics_ok) {
         std::printf("matrix %-6s %-12s passed (encode=%s, decode=%s, mse=%.9f, "

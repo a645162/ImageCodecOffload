@@ -80,6 +80,11 @@ public:
   Result<RuntimeResolutionLimit> runtimeResolutionLimit(BackendKind kind,
                                                         Format format) const;
 
+  // 某个后端句柄的显存用量快照（诊断 / 矩阵报告用）。未编译进来的后端返回
+  // BackendUnavailable；编进来但后端不跟踪单句柄占用时返回上报错，
+  // **不会**给出一个看着像真数字的 0。
+  Result<MemoryUsage> memoryUsage(BackendKind kind) const;
+
   // 每个后端的可用性（含具体原因），供 CLI / 设置页展示。
   // 不做缓存：用户可能在两次调用之间装了驱动、退出了占显存的程序。
   std::vector<std::pair<BackendKind, std::string>> probeBackends() const;
