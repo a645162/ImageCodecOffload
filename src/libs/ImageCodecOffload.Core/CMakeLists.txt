@@ -11,6 +11,11 @@ add_library(ImageCodecOffload.Core STATIC
   src/metrics.cpp
   src/backend.h)
 
+# 指标参考实现用 std::thread / std::barrier 做「样本值并行、累加顺序不变」的
+# 加速；Windows 的 MSVC 不需要额外链接，Linux/Unix 走 Threads::Threads。
+find_package(Threads REQUIRED)
+target_link_libraries(ImageCodecOffload.Core PUBLIC Threads::Threads)
+
 target_include_directories(ImageCodecOffload.Core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src")
 

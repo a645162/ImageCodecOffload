@@ -14,7 +14,10 @@
 // tests/metrics_golden.h 会拦下漂移。
 //
 // 这里的写法刻意保持「照公式直译」：不做 SIMD、不做循环展开、不做累加顺序
-// 优化。它跑得慢是设计的一部分，别在这里做性能优化。
+// 优化，也**不允许**把多个样本的累加重新结合成并行归约（(a+b)+(c+d) 与
+// ((a+b)+c)+d 在 double 下不是同一个数）。大图 SSIM 慢到分钟级，但并行只发生
+// 在「逐样本算窗口统计」这一段：每段结果先写进 band 缓冲，再由单线程按原来的
+// 样本顺序累加。因此线程数取 1 还是 64，结果逐位相同，golden 常量不受影响。
 #pragma once
 
 #include "image_codec_types.h"
@@ -37,7 +40,7 @@ constexpr double kMsSsimWeights[kMsSsimMaxLevels] = {0.0448, 0.2856, 0.3001,
                                                      0.2363, 0.1333};
 
 // 归一化后的 11 点一维高斯权重（二维窗 = 外积）。
-void gaussianWeights11(double* out);
+void gaussianWeights11(double *out);
 
 // MSE -> PSNR。MSE == 0 固定返回 99.0：有限值，避免 Inf/NaN 污染平均值与 JSON。
 double psnrFromMse(double mse);
@@ -49,10 +52,10 @@ int msSsimLevels(int width, int height);
 // 为什么不合成一个 compare()：11x11 窗的内存流量是纯平方误差的上百倍，
 // 只想筛掉编码器坏输出的调用方不该白付这笔钱。SSIM 与 MS-SSIM 合并，
 // 是因为 MS-SSIM 的第 0 级就是 SSIM 的那一次统计。
-Result<double> mse(const Image& a, const Image& b);
-Result<double> psnr(const Image& a, const Image& b);
-Result<SsimResult> ssim(const Image& a, const Image& b);
+Result<double> mse(const Image &a, const Image &b);
+Result<double> psnr(const Image &a, const Image &b);
+Result<SsimResult> ssim(const Image &a, const Image &b);
 
-}  // namespace metrics
-}  // namespace offload
-}  // namespace image_codec
+} // namespace metrics
+} // namespace offload
+} // namespace image_codec
