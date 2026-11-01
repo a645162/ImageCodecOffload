@@ -192,8 +192,9 @@ CPU 没有可移植、可靠的“当前可安全分配内存”计数器，因�
 `ICO_ERR_ENCODE_FAILED`。
 
 CLI 的 `ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k>` 可直接验证此路径。
-它只接受无压缩 24-bit BMP（支持 top-down/bottom-up 和行对齐），按行 seek/read 后
-执行 BGR→RGB 转换；灰度、带 alpha 或压缩 BMP 会明确拒绝，绝不回退为整图读入。
+它只接受无压缩 8-bit 灰度或 24-bit BMP（支持 top-down/bottom-up 和行对齐）；8-bit
+输入会验证灰度调色板并保持单通道，24-bit 输入按行 seek/read 后执行 BGR→RGB 转换。
+带 alpha、非灰度调色板或压缩 BMP 会明确拒绝，绝不回退为整图读入。
 
 ## 构建
 

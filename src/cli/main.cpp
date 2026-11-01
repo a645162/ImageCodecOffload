@@ -85,9 +85,11 @@ struct Bmp24RowSource final {
   std::ifstream input;
   int width = 0;
   int height = 0;
+  int channels = 0;
   uint64_t pixelOffset = 0;
   uint64_t stride = 0;
   bool bottomUp = false;
+  std::array<uint8_t, 256> grayPalette{};
 
   static bool open(const std::string &path, Bmp24RowSource *out,
                    std::string *error) {
@@ -99,17 +101,40 @@ struct Bmp24RowSource final {
     }
     const int32_t width = static_cast<int32_t>(readLe32(header.data() + 18));
     const int32_t rawHeight = static_cast<int32_t>(readLe32(header.data() + 22));
+    const auto bitsPerPixel = readLe16(header.data() + 28);
     if (header[0] != 'B' || header[1] != 'M' || readLe32(header.data() + 14) < 40 ||
         width <= 0 || rawHeight == 0 || readLe16(header.data() + 26) != 1 ||
-        readLe16(header.data() + 28) != 24 || readLe32(header.data() + 30) != 0) {
-      *error = "streaming only supports uncompressed 24-bit BMP";
+        (bitsPerPixel != 8 && bitsPerPixel != 24) || readLe32(header.data() + 30) != 0) {
+      *error = "streaming only supports uncompressed 8-bit gray or 24-bit BMP";
       return false;
     }
     out->width = width;
     out->height = rawHeight > 0 ? rawHeight : -rawHeight;
+    out->channels = bitsPerPixel == 8 ? 1 : 3;
     out->pixelOffset = readLe32(header.data() + 10);
-    out->stride = (static_cast<uint64_t>(width) * 3U + 3U) & ~uint64_t{3};
+    out->stride = (static_cast<uint64_t>(width) * out->channels + 3U) & ~uint64_t{3};
     out->bottomUp = rawHeight > 0;
+    if (bitsPerPixel == 8) {
+      if (out->pixelOffset < 54U + 256U * 4U) {
+        *error = "8-bit BMP has no full grayscale palette";
+        return false;
+      }
+      std::array<uint8_t, 256U * 4U> palette{};
+      out->input.seekg(54);
+      if (!out->input.read(reinterpret_cast<char *>(palette.data()), palette.size())) {
+        *error = "cannot read BMP grayscale palette";
+        return false;
+      }
+      for (size_t index = 0; index < out->grayPalette.size(); ++index) {
+        const auto offset = index * 4U;
+        if (palette[offset] != palette[offset + 1U] ||
+            palette[offset] != palette[offset + 2U]) {
+          *error = "8-bit BMP palette is not grayscale";
+          return false;
+        }
+        out->grayPalette[index] = palette[offset];
+      }
+    }
     return true;
   }
 };
@@ -118,7 +143,7 @@ ico_status readBmp24StreamingRow(void *user, const int y, uint8_t *destination,
                                  const size_t destinationSize) {
   auto *source = static_cast<Bmp24RowSource *>(user);
   if (source == nullptr || destination == nullptr || y < 0 || y >= source->height ||
-      destinationSize != static_cast<size_t>(source->width) * 3U) {
+      destinationSize != static_cast<size_t>(source->width) * source->channels) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
   const int fileRow = source->bottomUp ? source->height - 1 - y : y;
@@ -128,6 +153,12 @@ ico_status readBmp24StreamingRow(void *user, const int y, uint8_t *destination,
   if (!source->input.read(reinterpret_cast<char *>(bgr.data()),
                           static_cast<std::streamsize>(bgr.size()))) {
     return ICO_ERR_IO;
+  }
+  if (source->channels == 1) {
+    for (int x = 0; x < source->width; ++x) {
+      destination[x] = source->grayPalette[bgr[static_cast<size_t>(x)]];
+    }
+    return ICO_OK;
   }
   for (int x = 0; x < source->width; ++x) {
     const auto i = static_cast<size_t>(x) * 3U;
@@ -162,7 +193,7 @@ int cmdEncodeStreamJpeg2000(const std::string &input, const std::string &output)
   }
   const auto start = nowMicros();
   const auto status = image_codec_offload_encode_jpeg2000_rows(
-      codec, output.c_str(), source.width, source.height, 3,
+      codec, output.c_str(), source.width, source.height, source.channels,
       lowered == ".j2k" ? ICO_JPEG2000_CONTAINER_J2K : ICO_JPEG2000_CONTAINER_JP2,
       readBmp24StreamingRow, &source);
   image_codec_offload_destroy(codec);
@@ -172,8 +203,8 @@ int cmdEncodeStreamJpeg2000(const std::string &input, const std::string &output)
     return 1;
   }
   const auto milliseconds = static_cast<double>(nowMicros() - start) / 1000.0;
-  std::printf("%dx%d x3 BMP -> JPEG 2000 CPU tile stream in %.1f ms\n",
-              source.width, source.height, milliseconds);
+  std::printf("%dx%d x%d BMP -> JPEG 2000 CPU tile stream in %.1f ms\n",
+              source.width, source.height, source.channels, milliseconds);
   return 0;
 }
 
