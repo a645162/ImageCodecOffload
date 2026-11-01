@@ -436,23 +436,32 @@ Result<Image> Router::decode(Format format, const uint8_t *data, size_t size,
 
 // ---- 指标 ----
 
-Result<double> Router::mse(const Image &a, const Image &b, Outcome *outcome) {
+Result<double> Router::mse(const Image &a, const Image &b, Outcome *outcome,
+                           const MetricsProgressFn &progress) {
   return tryEach<double>(
       "mse", outcome, [](const ICodecBackend &) -> Result<void> { return {}; },
-      [&](ICodecBackend &backend) { return backend.mse(a, b); });
+      [&](ICodecBackend &backend) {
+        return backend.mseWithProgress(a, b, progress);
+      });
 }
 
-Result<double> Router::psnr(const Image &a, const Image &b, Outcome *outcome) {
+Result<double> Router::psnr(const Image &a, const Image &b, Outcome *outcome,
+                            const MetricsProgressFn &progress) {
   return tryEach<double>(
       "psnr", outcome, [](const ICodecBackend &) -> Result<void> { return {}; },
-      [&](ICodecBackend &backend) { return backend.psnr(a, b); });
+      [&](ICodecBackend &backend) {
+        return backend.psnrWithProgress(a, b, progress);
+      });
 }
 
 Result<SsimResult> Router::ssim(const Image &a, const Image &b,
-                                Outcome *outcome) {
+                                Outcome *outcome,
+                                const MetricsProgressFn &progress) {
   return tryEach<SsimResult>(
       "ssim", outcome, [](const ICodecBackend &) -> Result<void> { return {}; },
-      [&](ICodecBackend &backend) { return backend.ssim(a, b); });
+      [&](ICodecBackend &backend) {
+        return backend.ssimWithProgress(a, b, progress);
+      });
 }
 
 // ---- 强制指定后端 ----
@@ -504,37 +513,39 @@ Result<Image> Router::decodeWith(BackendKind kind, Format format,
   return backend->decode(format, data, size);
 }
 
-Result<double> Router::mseWith(BackendKind kind, const Image &a,
-                               const Image &b) {
+Result<double> Router::mseWith(BackendKind kind, const Image &a, const Image &b,
+                               const MetricsProgressFn &progress) {
   ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<double>(Status::BackendUnavailable,
                         std::string("router: backend not built: ") +
                             backendName(kind));
   }
-  return backend->mse(a, b);
+  return backend->mseWithProgress(a, b, progress);
 }
 
 Result<double> Router::psnrWith(BackendKind kind, const Image &a,
-                                const Image &b) {
+                                const Image &b,
+                                const MetricsProgressFn &progress) {
   ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<double>(Status::BackendUnavailable,
                         std::string("router: backend not built: ") +
                             backendName(kind));
   }
-  return backend->psnr(a, b);
+  return backend->psnrWithProgress(a, b, progress);
 }
 
 Result<SsimResult> Router::ssimWith(BackendKind kind, const Image &a,
-                                    const Image &b) {
+                                    const Image &b,
+                                    const MetricsProgressFn &progress) {
   ICodecBackend *backend = find(kind);
   if (backend == nullptr) {
     return fail<SsimResult>(Status::BackendUnavailable,
                             std::string("router: backend not built: ") +
                                 backendName(kind));
   }
-  return backend->ssim(a, b);
+  return backend->ssimWithProgress(a, b, progress);
 }
 
 } // namespace offload

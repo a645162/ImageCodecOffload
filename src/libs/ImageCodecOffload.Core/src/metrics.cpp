@@ -71,6 +71,31 @@ struct ScaleStats {
   uint64_t samples = 0;
 };
 
+// 进度累计器：done/total 按样本数加权。多个尺度共享同一个累加器，因此进度条
+// 在 level 0 结束时不会冲到 100%。
+struct ProgressCtx final {
+  const MetricsProgressFn *fn = nullptr;
+  long long done = 0;
+  long long total = 0;
+};
+
+// 单个尺度（level）的像素权重；与 downsample2x 的尺寸规则（整除 2）一致。
+int64_t levelWeight(int width, int height, int channels) {
+  return static_cast<int64_t>(width) * static_cast<int64_t>(height) *
+         static_cast<int64_t>(channels);
+}
+
+// 进度回调只在**累加线程**（worker 0）上调用，因此调用方不必加锁。
+inline void advanceProgress(ProgressCtx *ctx, int rows, int width,
+                            int channels) {
+  if (ctx == nullptr || ctx->fn == nullptr || !*ctx->fn) return;
+  if (ctx->total <= 0) return;
+  ctx->done += static_cast<long long>(rows) * width * channels;
+  if (ctx->done > ctx->total) ctx->done = ctx->total;
+  const int done = static_cast<int>((ctx->done * 10000LL) / ctx->total);
+  (*ctx->fn)(done, 10000);
+}
+
 // 单个 (像素, 通道) 的平方误差与高斯窗统计。运算顺序与串行版本逐项相同：
 // 先 dy 后 dx、先 sx/sy 后 sxx/syy/sxy，最后按同一公式合成 CS 与 SSIM。
 inline void sampleStats(const Image &a, const Image &b, const double *w,
@@ -134,7 +159,7 @@ inline void sampleStats(const Image &a, const Image &b, const double *w,
 // 顺序累加 → barrier。累加顺序与串行实现完全一致，因此结果逐位相同；
 // 而 121 次乘加的窗口计算（占全部耗时的 99%）被摊到多核上。
 void scaleStats(const Image &a, const Image &b, const bool with_window,
-                ScaleStats *out) {
+                ScaleStats *out, ProgressCtx *progress = nullptr) {
   const int width = a.width;
   const int height = a.height;
   const int channels = a.channels;
@@ -197,6 +222,8 @@ void scaleStats(const Image &a, const Image &b, const bool with_window,
             ssim_sum += ssim_values[i];
           }
         }
+        // 只由累加线程上报，回调因此天然串行。
+        advanceProgress(progress, rows, width, channels);
       }
       if (workers > 1) sync.arrive_and_wait();
     }
@@ -343,11 +370,17 @@ int msSsimLevels(int width, int height) {
   return levels;
 }
 
-Result<double> mse(const Image &a, const Image &b) {
+Result<double> mse(const Image &a, const Image &b,
+                   const MetricsProgressFn &progress) {
   if (auto ok = validatePair(a, b); !ok) return std::unexpected(ok.error());
 
+  ProgressCtx ctx;
+  ctx.fn = progress ? &progress : nullptr;
+  ctx.total = levelWeight(a.width, a.height, a.channels);
+
   ScaleStats s;
-  scaleStats(a, b, /*with_window=*/false, &s);
+  scaleStats(a, b, /*with_window=*/false, &s,
+             ctx.fn != nullptr ? &ctx : nullptr);
 
   const double n = static_cast<double>(s.samples);
   if (!(n > 0.0))
@@ -356,17 +389,34 @@ Result<double> mse(const Image &a, const Image &b) {
   return s.sq_sum / n;
 }
 
-Result<double> psnr(const Image &a, const Image &b) {
-  const Result<double> m = mse(a, b);
+Result<double> psnr(const Image &a, const Image &b,
+                    const MetricsProgressFn &progress) {
+  const Result<double> m = mse(a, b, progress);
   if (!m) return std::unexpected(m.error());
   return psnrFromMse(*m);
 }
 
-Result<SsimResult> ssim(const Image &a, const Image &b) {
+Result<SsimResult> ssim(const Image &a, const Image &b,
+                        const MetricsProgressFn &progress) {
   if (auto ok = validatePair(a, b); !ok) return std::unexpected(ok.error());
 
+  // MS-SSIM 的分母：所有尺度（含第 0 级）的样本数之和。先算出来，进度才是
+  // 单调的——否则 level 0 跑完就已经到 100%，后面几级全是「倒退」。
+  ProgressCtx ctx;
+  ctx.fn = progress ? &progress : nullptr;
+  {
+    int w = a.width;
+    int h = a.height;
+    for (int level = 0; level < msSsimLevels(a.width, a.height); ++level) {
+      ctx.total += levelWeight(w, h, a.channels);
+      w /= 2;
+      h /= 2;
+    }
+  }
+
   ScaleStats s;
-  scaleStats(a, b, /*with_window=*/true, &s);
+  scaleStats(a, b, /*with_window=*/true, &s,
+             ctx.fn != nullptr ? &ctx : nullptr);
 
   const double n0 = static_cast<double>(s.samples);
   if (!(n0 > 0.0)) {
@@ -397,7 +447,8 @@ Result<SsimResult> ssim(const Image &a, const Image &b) {
     }
 
     ScaleStats sl;
-    scaleStats(next, next_b, /*with_window=*/true, &sl);
+    scaleStats(next, next_b, /*with_window=*/true, &sl,
+               ctx.fn != nullptr ? &ctx : nullptr);
 
     const double nl = static_cast<double>(sl.samples);
     cs[level] = sl.cs_sum / nl;

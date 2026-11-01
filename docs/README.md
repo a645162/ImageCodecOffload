@@ -309,6 +309,12 @@ codestream，其余三个是 JP2 容器家族，发布回归必须保留这四�
 CPU 指标的 11×11 窗按 band 并行计算、**累加顺序保持不变**，因此线程数取 1 还是 N 结果逐位相同
 （`ICO_METRICS_THREADS` 可覆盖线程数，0/负数强制串行；`ico_test` 的 golden 常量锁住这一点）。
 
+指标接口支持可选的**块级进度回调**（`MetricsProgressFn`，`mse/psnr/ssim` 等都有对应的
+`*WithProgress` 变体，`Router` 会把它透传给实际被执行的后端）：CPU 后端每算完一个 band
+回调一次（万分比），GPU 后端是单次 kernel 下发，没有中间反馈点，只在开始/结束时回调，
+进度恒为「未知」。回调在**调用指标的线程**上执行，界面侧必须自己投递到 GUI 线程；
+不要为了「看起来在动」在 GPU 路径上伪造百分比。
+
 ## 约束
 
 - `ImageCodecOpenCL` **不引用** `ImageCodecPlatform`（纯 OpenCL，自包含）。

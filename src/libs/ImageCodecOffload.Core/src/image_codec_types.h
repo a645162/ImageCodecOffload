@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <string_view>
 #include <string>
 #include <vector>
@@ -235,6 +236,18 @@ struct SsimResult {
   double ms_ssim = 0.0;
   int levels = 0; // MS-SSIM 实际使用的尺度数（1..5）
 };
+
+// ---- 指标进度的回调 ----
+//
+// 大图上单是 SSIM 就要分钟级，界面必须能显示「算到哪了」。回调粒度是
+// **一块（band）**：done/total 按像素数加权，单调递增，最后一次恒等于 total。
+//
+// 约束：
+//   - 在**累加线程**上调用（不是任意 worker），调用方不需要自己加锁；
+//   - 必须足够便宜：界面侧只在百分比变化时才投递事件，不要在回调里做 IO；
+//   - 不是所有后端都提供：GPU 后端一次 kernel 下发，没有中间反馈点，它们
+//     不会调用这个回调（宁可没有进度，也不报一个假进度）。
+using MetricsProgressFn = std::function<void(int done, int total)>;
 
 } // namespace offload
 } // namespace image_codec

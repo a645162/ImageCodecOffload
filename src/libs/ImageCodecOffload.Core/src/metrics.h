@@ -52,9 +52,16 @@ int msSsimLevels(int width, int height);
 // 为什么不合成一个 compare()：11x11 窗的内存流量是纯平方误差的上百倍，
 // 只想筛掉编码器坏输出的调用方不该白付这笔钱。SSIM 与 MS-SSIM 合并，
 // 是因为 MS-SSIM 的第 0 级就是 SSIM 的那一次统计。
-Result<double> mse(const Image &a, const Image &b);
-Result<double> psnr(const Image &a, const Image &b);
-Result<SsimResult> ssim(const Image &a, const Image &b);
+//
+// progress 为空 = 不需要进度（默认，行为与加入它之前完全一致）。给了回调时，
+// 每算完一个 band 调一次，done/total 按**像素数加权**，把多尺度金字塔也算进
+// 分母，因此进度条不会在「第 0 级结束」时冲到 100% 再倒退。
+Result<double> mse(const Image &a, const Image &b,
+                   const MetricsProgressFn &progress = {});
+Result<double> psnr(const Image &a, const Image &b,
+                    const MetricsProgressFn &progress = {});
+Result<SsimResult> ssim(const Image &a, const Image &b,
+                        const MetricsProgressFn &progress = {});
 
 } // namespace metrics
 } // namespace offload

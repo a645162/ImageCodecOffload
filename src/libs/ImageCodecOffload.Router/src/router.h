@@ -100,12 +100,17 @@ public:
   Result<Image> decode(Format format, const uint8_t *data, size_t size,
                        Outcome *outcome = nullptr);
 
-  Result<double> mse(const Image &a, const Image &b,
-                     Outcome *outcome = nullptr);
+  // progress 为空 = 不要进度（默认，与加入它之前完全一致）。只有真的按 band
+  // 推进的后端（当前是 CPU 参考实现）会调用它；GPU 后端一次 kernel 下发，
+  // 没有中间反馈点，宁可不上报也不伪造。
+  Result<double> mse(const Image &a, const Image &b, Outcome *outcome = nullptr,
+                     const MetricsProgressFn &progress = {});
   Result<double> psnr(const Image &a, const Image &b,
-                      Outcome *outcome = nullptr);
+                      Outcome *outcome = nullptr,
+                      const MetricsProgressFn &progress = {});
   Result<SsimResult> ssim(const Image &a, const Image &b,
-                          Outcome *outcome = nullptr);
+                          Outcome *outcome = nullptr,
+                          const MetricsProgressFn &progress = {});
 
   // ---- 强制指定后端（对拍与调参用）----
   // 不回退：失败就返回失败原因。自动回退会把「CUDA 与 CPU 的数字不一样」
@@ -119,9 +124,12 @@ public:
                                                    const EncodeParams &params);
   Result<Image> decodeWith(BackendKind kind, Format format, const uint8_t *data,
                            size_t size);
-  Result<double> mseWith(BackendKind kind, const Image &a, const Image &b);
-  Result<double> psnrWith(BackendKind kind, const Image &a, const Image &b);
-  Result<SsimResult> ssimWith(BackendKind kind, const Image &a, const Image &b);
+  Result<double> mseWith(BackendKind kind, const Image &a, const Image &b,
+                         const MetricsProgressFn &progress = {});
+  Result<double> psnrWith(BackendKind kind, const Image &a, const Image &b,
+                          const MetricsProgressFn &progress = {});
+  Result<SsimResult> ssimWith(BackendKind kind, const Image &a, const Image &b,
+                              const MetricsProgressFn &progress = {});
 
   // 默认优先级：GPU 快的排前面，CPU 永远最后。
   static std::vector<BackendKind> defaultOrder();

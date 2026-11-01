@@ -64,6 +64,15 @@ public:
   Result<double> mse(const Image &a, const Image &b) override;
   Result<double> psnr(const Image &a, const Image &b) override;
   Result<SsimResult> ssim(const Image &a, const Image &b) override;
+
+  // CPU 参考实现是唯一真的按 band 推进的后端，因此进度不是装饰。
+  Result<double> mseWithProgress(const Image &a, const Image &b,
+                                 const MetricsProgressFn &progress) override;
+  Result<double> psnrWithProgress(const Image &a, const Image &b,
+                                  const MetricsProgressFn &progress) override;
+  Result<SsimResult>
+  ssimWithProgress(const Image &a, const Image &b,
+                   const MetricsProgressFn &progress) override;
 };
 
 } // namespace cpu

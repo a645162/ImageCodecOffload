@@ -101,6 +101,26 @@ public:
   virtual Result<double> mse(const Image &a, const Image &b) = 0;
   virtual Result<double> psnr(const Image &a, const Image &b) = 0;
   virtual Result<SsimResult> ssim(const Image &a, const Image &b) = 0;
+
+  // 带分块进度的版本。默认退化为「忽略进度 + 调上面的入口」：
+  // GPU 后端是一次 kernel 下发，没有中间反馈点，硬造一个假进度只会骗用户；
+  // 只有 CPU 参考实现（按 band 累加）真的能报告进度。
+  virtual Result<double> mseWithProgress(const Image &a, const Image &b,
+                                         const MetricsProgressFn &progress) {
+    (void)progress;
+    return mse(a, b);
+  }
+  virtual Result<double> psnrWithProgress(const Image &a, const Image &b,
+                                          const MetricsProgressFn &progress) {
+    (void)progress;
+    return psnr(a, b);
+  }
+  virtual Result<SsimResult>
+  ssimWithProgress(const Image &a, const Image &b,
+                   const MetricsProgressFn &progress) {
+    (void)progress;
+    return ssim(a, b);
+  }
 };
 
 // 默认实现放在类外而不是写成 `= 0`：分片是 TIFF 专用的优化，让每个后端

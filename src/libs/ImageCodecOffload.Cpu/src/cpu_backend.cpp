@@ -111,6 +111,24 @@ Result<SsimResult> CpuBackend::ssim(const Image& a, const Image& b) {
   return metrics::ssim(a, b);
 }
 
+// 带块级进度的变体：实现完全转交给 metrics，进度回调由 11x11 窗的 band 循环
+// 逐段上报（累计顺序不变，因此与不带进度的结果逐位相同）。
+Result<double> CpuBackend::mseWithProgress(const Image& a, const Image& b,
+                                           const MetricsProgressFn& progress) {
+  return metrics::mse(a, b, progress);
+}
+
+Result<double> CpuBackend::psnrWithProgress(const Image& a, const Image& b,
+                                            const MetricsProgressFn& progress) {
+  return metrics::psnr(a, b, progress);
+}
+
+Result<SsimResult>
+CpuBackend::ssimWithProgress(const Image& a, const Image& b,
+                             const MetricsProgressFn& progress) {
+  return metrics::ssim(a, b, progress);
+}
+
 }  // namespace cpu
 }  // namespace offload
 }  // namespace image_codec
