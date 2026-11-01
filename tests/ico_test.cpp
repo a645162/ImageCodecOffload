@@ -1764,6 +1764,29 @@ void testCapiAdvancedParams() {
   png.png_strategy = 2;
   check(!encode(ICO_FORMAT_PNG, png).empty(), "c api png strategy encode");
 
+  std::vector<uint8_t> j2k_bytes(src.pixels.size() * 4U);
+  size_t j2k_size = j2k_bytes.size();
+  const ico_encode_params j2k_params{};
+  const auto j2k_status = image_codec_offload_encode_ex(
+      cpu, ICO_FORMAT_JPEG2000, &image, &j2k_params,
+      ICO_JPEG2000_CONTAINER_J2K, j2k_bytes.data(), &j2k_size,
+      j2k_bytes.size());
+  check(j2k_status == ICO_OK, "c api extended jpeg2000 encode succeeds");
+  j2k_bytes.resize(j2k_status == ICO_OK ? j2k_size : 0U);
+  if (!j2k_bytes.empty()) {
+    check(j2k_bytes.size() >= 4U && j2k_bytes[0] == 0xFF &&
+              j2k_bytes[1] == 0x4F && j2k_bytes[2] == 0xFF &&
+              j2k_bytes[3] == 0x51,
+          "c api jpeg2000 container reaches the J2K codestream");
+  }
+  std::vector<uint8_t> invalid_output(src.pixels.size() * 4U);
+  size_t invalid_size = invalid_output.size();
+  check(image_codec_offload_encode_ex(cpu, ICO_FORMAT_JPEG2000, &image, nullptr,
+                                   99, invalid_output.data(), &invalid_size,
+                                   invalid_output.size()) ==
+            ICO_ERR_INVALID_ARGUMENT,
+        "c api rejects an unknown jpeg2000 container");
+
   image_codec_offload_destroy(cpu);
 }
 

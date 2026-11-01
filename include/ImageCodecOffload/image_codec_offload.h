@@ -254,6 +254,14 @@ ICO_API ico_status image_codec_offload_encode(ico_codec *codec, int format,
                                               void *out, size_t *out_len,
                                               size_t out_capacity);
 
+// Extended encoding entry point. Kept separate from ico_encode_params so the
+// existing C struct layout and image_codec_offload_encode ABI remain intact.
+// jpeg2000_container is ico_jpeg2000_container; other values are rejected.
+ICO_API ico_status image_codec_offload_encode_ex(
+    ico_codec *codec, int format, const ico_image *img,
+    const ico_encode_params *params, int jpeg2000_container, void *out,
+    size_t *out_len, size_t out_capacity);
+
 // 真正有界内存的 JPEG 2000 行流式编码。该入口当前只使用 OpenJPEG CPU tile
 // writer，不会把所有行聚合为 ico_image，也不会声明 GPU 参与。output_path 是
 // UTF-8 文件路径；调用方负责先写临时路径、成功后再原子替换最终输出。

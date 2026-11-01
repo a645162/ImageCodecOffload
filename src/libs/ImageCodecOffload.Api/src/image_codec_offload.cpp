@@ -473,27 +473,37 @@ ico_status image_codec_offload_decode(ico_codec* codec, int format,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_encode(ico_codec* codec, int format,
-                                      const ico_image* img,
-                                      const ico_encode_params* params,
-                                      void* out, size_t* out_len,
-                                      size_t out_capacity) {
+ico_status image_codec_offload_encode_ex(
+    ico_codec* codec, int format, const ico_image* img,
+    const ico_encode_params* params, const int jpeg2000_container, void* out,
+    size_t* out_len, size_t out_capacity) {
   if (codec == nullptr || img == nullptr || out_len == nullptr) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
 
   const Format fmt = toFormat(format);
   if (fmt == Format::Unknown) return ICO_ERR_UNSUPPORTED_FORMAT;
+  if (jpeg2000_container != ICO_JPEG2000_CONTAINER_JP2 &&
+      jpeg2000_container != ICO_JPEG2000_CONTAINER_J2K) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
 
   Image image;
   if (!importImage(img, &image)) return ICO_ERR_INVALID_ARGUMENT;
 
   Outcome outcome;
+  auto encodeParams = toParams(params);
+  if (fmt == Format::Jpeg2000) {
+    encodeParams.jpeg2000_container =
+        jpeg2000_container == ICO_JPEG2000_CONTAINER_J2K
+            ? Jpeg2000Container::J2k
+            : Jpeg2000Container::Jp2;
+  }
   const auto encoded = codec->forced
                            ? codec->router.encodeWith(codec->forced_kind, fmt,
-                                                      image, toParams(params))
+                                                      image, encodeParams)
                            : codec->router.encode(fmt, image,
-                                                  toParams(params), &outcome);
+                                                  encodeParams, &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome, fmt);
   if (!encoded) return mapStatus(encoded.error().code);
@@ -507,6 +517,16 @@ ico_status image_codec_offload_encode(ico_codec* codec, int format,
   std::memcpy(out, encoded->data(), encoded->size());
   *out_len = encoded->size();
   return ICO_OK;
+}
+
+ico_status image_codec_offload_encode(ico_codec* codec, int format,
+                                      const ico_image* img,
+                                      const ico_encode_params* params,
+                                      void* out, size_t* out_len,
+                                      size_t out_capacity) {
+  return image_codec_offload_encode_ex(
+      codec, format, img, params, ICO_JPEG2000_CONTAINER_JP2, out, out_len,
+      out_capacity);
 }
 
 ico_status image_codec_offload_encode_jpeg2000_rows(
