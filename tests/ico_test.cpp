@@ -103,6 +103,12 @@ void testFormatCatalogAndProbe() {
     check(!jpeg2000->decodeStreaming && jpeg2000->encodeStreaming,
           "jpeg2000 catalog reports encode-only row streaming");
   }
+  const auto *tiff = image_codec::offload::formatDescriptor(Format::Tiff);
+  check(tiff != nullptr, "tiff descriptor");
+  if (tiff != nullptr) {
+    check(!tiff->decodeStreaming && tiff->encodeStreaming,
+          "tiff catalog reports encode-only strip streaming");
+  }
   const auto *jpegXl = image_codec::offload::formatDescriptor(Format::JpegXl);
   check(jpegXl != nullptr, "jpeg-xl descriptor");
   if (jpegXl != nullptr) {
