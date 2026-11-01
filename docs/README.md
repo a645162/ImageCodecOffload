@@ -274,6 +274,8 @@ ico encode <in> <out> [--quality N] [--compression N] [--tile N]
                       [--backend cpu|opencl|cuda|vulkan]
 ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]
 ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]  # GPU 与 CPU 的 MSE/PSNR/SSIM/MS-SSIM 并排
+ico matrix <input.bmp> <output-dir>                    # 编码、回读及逐格质量指标
+ico matrix-metrics <input.bmp> <artifacts-dir> <report-dir> # 复用已有产物，仅解码并计算质量指标
 ```
 
 BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入），它不是目标格式。
@@ -286,6 +288,8 @@ GPU 缓冲搬运统计成 GPU 编解码通过。每格同时记录 MSE、PSNR、
 CSV 的 `metrics_status` 将资源/能力跳过与真实指标错误区分开。后端不可用、方向/格式不支持和资源不足都以
 `skipped` 及具体原因记录；真正的编解码或校验错误仍返回失败。不要把 JPEG 2000 折叠成单个 `.jp2` 项：`.j2k` 是裸
 codestream，其余三个是 JP2 容器家族，发布回归必须保留这四个独立产物。
+
+`matrix-metrics` 不重编码、不改写 `artifacts-dir` 中的既有文件，适合给耗时较长的大图矩阵补算质量指标；它单独输出 manifest。缺少产物和本次未构建的后端记为 `skipped`，文件系统错误、解码错误和非资源类指标错误令命令失败。
 
 ## 约束
 
