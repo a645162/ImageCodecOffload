@@ -275,7 +275,11 @@ ico encode <in> <out> [--quality N] [--compression N] [--tile N]
 ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]
 ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]  # GPU 与 CPU 的 MSE/PSNR/SSIM/MS-SSIM 并排
 ico matrix <input.bmp> <output-dir>                    # 编码、回读及逐格质量指标
-ico matrix-metrics <input.bmp> <artifacts-dir> <report-dir> # 复用已有产物，仅解码并计算质量指标
+ico matrix-metrics <input.bmp> <artifacts-dir> <report-dir>
+                      [--only-backend cpu|opencl|cuda|vulkan]...  # 逗号分隔或重复给出
+                      [--only-format jpeg|tiff|png|jpeg2000-jp2|...]...
+                      [--metrics-backend cpu|opencl|cuda|vulkan]  # 只换算指标的后端
+                      [--resume]                  # 复用 passed/skipped 的格子，只重算 failed
 ```
 
 BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入），它不是目标格式。
@@ -290,6 +294,20 @@ CSV 的 `metrics_status` 将资源/能力跳过与真实指标错误区分开。
 codestream，其余三个是 JP2 容器家族，发布回归必须保留这四个独立产物。
 
 `matrix-metrics` 不重编码、不改写 `artifacts-dir` 中的既有文件，适合给耗时较长的大图矩阵补算质量指标；它单独输出 manifest。缺少产物和本次未构建的后端记为 `skipped`，文件系统错误、解码错误和非资源类指标错误令命令失败。
+
+- **逐格原子 checkpoint**：每算完一格就把整份 manifest 重写到 `manifest.csv.tmp` 再改名覆盖，
+  进程被 Ctrl-C / OOM 杀掉时盘上一定是上一次完整提交，不会留下半行 CSV。
+- **`--resume`**：复用已有 manifest 中 `passed` / `skipped` 的行，只重算 `failed` 的格子。
+  复用还要求该行的 `metrics_backend` 与本次一致——换了设备就重算，避免同一份报告里混两种数字。
+  被 `--only-*` 过滤掉的历史行按原文保留，不会被顺手删掉。
+- **`--metrics-backend`**：解码仍由产物自己的后端完成，只有 MSE/PSNR/SSIM/MS-SSIM 换到指定后端。
+  manifest 的 `metrics_backend` 列记录这一格的指标实际由谁计算。
+  大图（`data/Merge.bmp`，32000×19656）实测：CPU 11×11 窗是分钟级，GPU 是秒级。
+- **`--only-backend` / `--only-format`**：拼错的格式名直接报错并列出可用名字，
+  不会退化成「跑全部」——那会让人以为只跑了一格，实际启动整张大图矩阵。
+
+CPU 指标的 11×11 窗按 band 并行计算、**累加顺序保持不变**，因此线程数取 1 还是 N 结果逐位相同
+（`ICO_METRICS_THREADS` 可覆盖线程数，0/负数强制串行；`ico_test` 的 golden 常量锁住这一点）。
 
 ## 约束
 
@@ -312,6 +330,12 @@ codestream，其余三个是 JP2 容器家族，发布回归必须保留这四�
   `argv[1]` / `VIC_TEST_DEVICE_INDEX` 指定设备来验证这条路径。
 - CUDA / OpenCL / Vulkan 与 CPU 参考的画质指标必须逐项给出**同一个数字**（golden 常量锁在
   `tests/ico_test.cpp`）。换后端不换数字，改公式就是改契约。
+  - 小图上 `ico_test` 以 1e-9 断言「GPU 与 CPU 一致」；GPU kernel 用 double 累加并通过
+    `atomicAdd` 合并 block 结果，block 之间没有固定顺序，因此在 1.9 GB 大图上两者的末几位
+    会不同（相对误差 ~1e-15，`ico compare` 可复核）。这是「浮点求和不满足结合律」的必然结果，
+    不是某个后端算错；报告里比较的是各后端自己那条路径的可复现数字。
+  - CPU 端的 11×11 窗按 band 并行（`ICO_METRICS_THREADS`），但**累加顺序与串行完全相同**，
+    所以 CPU 自身在任意线程数下逐位一致。
 - 子项目的 CMake 用 `PROJECT_SOURCE_DIR` 定位自己的 `include/`：
   它们会被 `add_subdirectory` 复用，`CMAKE_SOURCE_DIR` 会指向父工程根目录。
 

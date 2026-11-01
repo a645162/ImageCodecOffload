@@ -4,7 +4,10 @@
 # Email: a645162@163.com
 # Created: 2026-10-31
 
-add_executable(ico main.cpp)
+add_executable(ico
+  main.cpp
+  cli_common.cpp
+  matrix_commands.cpp)
 
 target_link_libraries(ico PRIVATE
   ImageCodecOffload.Api

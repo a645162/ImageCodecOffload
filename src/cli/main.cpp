@@ -22,6 +22,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -34,8 +35,10 @@
 
 #include "ImageCodecOffload/image_codec_offload.h"
 #include "bmp_io.h"
-#include "metrics.h"
+#include "cli_common.h"
 #include "image_codec_types.h"
+#include "matrix_commands.h"
+#include "metrics.h"
 #include "router.h"
 
 namespace {
@@ -46,6 +49,9 @@ using image_codec::offload::EncodeParams;
 using image_codec::offload::Format;
 using image_codec::offload::Image;
 using image_codec::offload::Router;
+// 文件读写、读图与时间工具放在 cli_common，矩阵命令放在 matrix_commands：
+// 两条命令必须共享同一套「BMP 走中转、其它走路由层」的语义。
+using namespace ico_cli;
 
 int g_failures = 0;
 
@@ -62,30 +68,22 @@ void printUsage() {
       "  ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k|out.jpf|out.jpx>\n"
       "  ico encode-stream-jxl <in.bmp> <out.jxl> (RGB24, CPU/libjxl)\n"
       "  ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]\n"
-      "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]\n"
+      "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan] [--tolerance "
+      "1e-9]\n"
       "  ico matrix <input.bmp> <output-dir>\n"
       "  ico matrix-metrics <input.bmp> <artifacts-dir> <report-dir>\n"
+      "                        [--only-backend cpu|opencl|cuda|vulkan]...\n"
+      "                        [--only-format "
+      "jpeg|tiff|png|jpeg2000-jp2|...]...\n"
+      "                        [--metrics-backend cpu|opencl|cuda|vulkan]\n"
+      "                        [--resume]\n"
       "\n"
-      "in/out 的格式由文件内容（魔数）与扩展名共同决定；BMP 只用于中转。\n");
-}
-
-bool writeFile(const std::string &path, const std::vector<uint8_t> &data,
-               std::string *err);
-bool loadImage(Router &router, const std::string &path, Image *out,
-               std::string *err);
-long long nowMicros();
-
-std::string csvField(const std::string &value) {
-  if (value.find_first_of(",\"\r\n") == std::string::npos) return value;
-  std::string escaped;
-  escaped.reserve(value.size() + 2);
-  escaped.push_back('"');
-  for (const char ch : value) {
-    if (ch == '"') escaped.push_back('"');
-    escaped.push_back(ch);
-  }
-  escaped.push_back('"');
-  return escaped;
+      "in/out 的格式由文件内容（魔数）与扩展名共同决定；BMP 只用于中转。\n"
+      "matrix-metrics 每完成一格就原子重写 manifest.csv；--resume 复用其中\n"
+      "passed/skipped 的格子，只重算 failed 的格子。--metrics-backend 只换算\n"
+      "指标的后端（1.9 GB 图实测：CPU 串行约 340 s、24 线程约 52 s、GPU 约 23 "
+      "s），\n"
+      "解码仍用产物自己的后端。\n");
 }
 
 uint16_t readLe16(const uint8_t *data) {
@@ -282,487 +280,6 @@ int cmdEncodeStreamJpegXl(const std::string &input, const std::string &output) {
   std::printf("%dx%d RGB BMP -> JPEG XL CPU chunked input in %.1f ms\n",
               source.width, source.height, milliseconds);
   return 0;
-}
-
-int cmdMatrix(const std::string &input, const std::string &output_dir) {
-  Router router;
-  std::string error;
-  Image source;
-  if (!loadImage(router, input, &source, &error)) {
-    std::fprintf(stderr, "error: %s\n", error.c_str());
-    return 1;
-  }
-
-  std::error_code directory_error;
-  std::filesystem::create_directories(output_dir, directory_error);
-  if (directory_error) {
-    std::fprintf(stderr, "error: cannot create matrix directory: %s\n",
-                 directory_error.message().c_str());
-    return 1;
-  }
-  std::ofstream manifest(std::filesystem::path(output_dir) / "manifest.csv",
-                         std::ios::trunc);
-  if (!manifest) {
-    std::fprintf(stderr, "error: cannot create matrix manifest\n");
-    return 1;
-  }
-  manifest
-      << "backend,format,status,encode_mode,decode_mode,bytes,width,height,"
-         "channels,codec_elapsed_ms,metrics_status,mse,psnr,ssim,"
-         "ms_ssim,metrics_elapsed_ms,error\n"
-      << std::setprecision(17);
-
-  const std::vector<BackendKind> backends = {
-      BackendKind::Cpu, BackendKind::OpenCl, BackendKind::Cuda,
-      BackendKind::Vulkan};
-  struct MatrixFormat final {
-    Format format;
-    const char *name;
-    const char *suffix;
-    image_codec::offload::Jpeg2000Container jpeg2000Container =
-        image_codec::offload::Jpeg2000Container::Jp2;
-  };
-  // JPEG 2000 的四种用户可选后缀不能在矩阵中折叠成一个抽象 Format：.j2k
-  // 是裸 codestream，而 .jp2/.jpf/.jpx 都必须实际产出并重新解码验证。
-  const std::vector<MatrixFormat> formats = {
-      {Format::Jpeg, "jpeg", "jpg"},
-      {Format::Tiff, "tiff", "tiff"},
-      {Format::Png, "png", "png"},
-      {Format::Jpeg2000, "jpeg2000-jp2", "jp2"},
-      {Format::Jpeg2000, "jpeg2000-j2k", "j2k",
-       image_codec::offload::Jpeg2000Container::J2k},
-      {Format::Jpeg2000, "jpeg2000-jpf", "jpf"},
-      {Format::Jpeg2000, "jpeg2000-jpx", "jpx"},
-      {Format::JpegXl, "jpeg-xl", "jxl"},
-  };
-  bool hard_failure = false;
-  for (const BackendKind backend : backends) {
-    for (const MatrixFormat &matrix_format : formats) {
-      const std::string backend_name =
-          image_codec::offload::backendName(backend);
-      const std::string format_name = matrix_format.name;
-      const std::string encode_mode =
-          image_codec::offload::executionModeName(router.executionMode(
-              backend, matrix_format.format, CodecDirection::Encode));
-      const std::string decode_mode =
-          image_codec::offload::executionModeName(router.executionMode(
-              backend, matrix_format.format, CodecDirection::Decode));
-      const auto output =
-          std::filesystem::path(output_dir) /
-          (backend_name + "-" + format_name + "." + matrix_format.suffix);
-      const long long start = nowMicros();
-      EncodeParams params;
-      params.jpeg2000_container = matrix_format.jpeg2000Container;
-      auto encoded =
-          router.encodeWith(backend, matrix_format.format, source, params);
-      const double elapsed = static_cast<double>(nowMicros() - start) / 1000.0;
-      if (!encoded) {
-        const auto status = encoded.error().code;
-        const std::string escaped = encoded.error().message;
-        const bool skipped =
-            status == image_codec::offload::Status::BackendUnavailable ||
-            status == image_codec::offload::Status::UnsupportedFormat ||
-            status == image_codec::offload::Status::OutOfMemory;
-        manifest << backend_name << ',' << format_name << ','
-                 << (skipped ? "skipped" : "failed") << ',' << encode_mode
-                 << ',' << decode_mode << ",0,0,0,0," << elapsed
-                 << ",not-run,,,,,0," << csvField(escaped) << '\n';
-        if (skipped) {
-          std::printf("matrix %-6s %-12s skipped (encode=%s, decode=%s): %s\n",
-                      backend_name.c_str(), format_name.c_str(),
-                      encode_mode.c_str(), decode_mode.c_str(),
-                      escaped.c_str());
-        } else {
-          hard_failure = true;
-        }
-        continue;
-      }
-      if (!writeFile(output.string(), *encoded, &error)) {
-        manifest << backend_name << ',' << format_name << ",failed,"
-                 << encode_mode << ',' << decode_mode << ",0,0,0,0," << elapsed
-                 << ",not-run,,,,,0," << csvField(error) << '\n';
-        hard_failure = true;
-        continue;
-      }
-      auto decoded = router.decodeWith(backend, matrix_format.format,
-                                       encoded->data(), encoded->size());
-      if (!decoded || decoded->width != source.width ||
-          decoded->height != source.height ||
-          decoded->channels != source.channels) {
-        const std::string message = decoded
-                                        ? "decoded geometry/channel mismatch"
-                                        : decoded.error().message;
-        manifest << backend_name << ',' << format_name << ",failed,"
-                 << encode_mode << ',' << decode_mode << ',' << encoded->size()
-                 << ",0,0,0," << elapsed << ',' << "not-run,,,,,0,"
-                 << csvField(message) << '\n';
-        hard_failure = true;
-        continue;
-      }
-      const long long metrics_start = nowMicros();
-      auto mse = router.mseWith(backend, source, *decoded);
-      auto ssim = router.ssimWith(backend, source, *decoded);
-      const double metrics_elapsed =
-          static_cast<double>(nowMicros() - metrics_start) / 1000.0;
-      const bool metrics_ok = mse && ssim;
-      std::string metrics_error;
-      const auto is_skippable_metric_error = [](const auto &error) {
-        return error.code == image_codec::offload::Status::BackendUnavailable ||
-               error.code == image_codec::offload::Status::UnsupportedFormat ||
-               error.code == image_codec::offload::Status::OutOfMemory;
-      };
-      if (!mse) {
-        metrics_error = mse.error().message;
-      }
-      if (!ssim) {
-        if (!metrics_error.empty()) metrics_error += "; ";
-        metrics_error += ssim.error().message;
-      }
-      const bool metrics_hard_failure =
-          (!mse && !is_skippable_metric_error(mse.error())) ||
-          (!ssim && !is_skippable_metric_error(ssim.error()));
-      const bool metrics_skipped = !metrics_ok && !metrics_hard_failure;
-      const char *metrics_status =
-          metrics_ok ? "passed" : (metrics_skipped ? "skipped" : "failed");
-      manifest << backend_name << ',' << format_name << ",passed,"
-               << encode_mode << ',' << decode_mode << ',' << encoded->size()
-               << ',' << decoded->width << ',' << decoded->height << ','
-               << decoded->channels << ',' << elapsed << ',' << metrics_status
-               << ',';
-      if (metrics_ok) {
-        manifest << *mse << ','
-                 << image_codec::offload::metrics::psnrFromMse(*mse) << ','
-                 << ssim->ssim << ',' << ssim->ms_ssim;
-      } else {
-        manifest << ",,,";
-        if (!metrics_skipped) hard_failure = true;
-      }
-      manifest << ',' << metrics_elapsed << ',' << csvField(metrics_error)
-               << '\n';
-      if (metrics_ok) {
-        std::printf("matrix %-6s %-12s passed (encode=%s, decode=%s, mse=%.9f, "
-                    "psnr=%.9f, ssim=%.9f, ms-ssim=%.9f, %.1f ms)\n",
-                    backend_name.c_str(), format_name.c_str(),
-                    encode_mode.c_str(), decode_mode.c_str(), *mse,
-                    image_codec::offload::metrics::psnrFromMse(*mse),
-                    ssim->ssim, ssim->ms_ssim, elapsed + metrics_elapsed);
-      } else {
-        std::printf("matrix %-6s %-12s codec=passed metrics=%s: %s\n",
-                    backend_name.c_str(), format_name.c_str(), metrics_status,
-                    metrics_error.c_str());
-      }
-    }
-  }
-  return hard_failure ? 1 : 0;
-}
-
-bool readFile(const std::string &path, std::vector<uint8_t> *out,
-              std::string *err) {
-  std::FILE *f = std::fopen(path.c_str(), "rb");
-  if (f == nullptr) {
-    if (err != nullptr) *err = "cannot open " + path;
-    return false;
-  }
-  std::fseek(f, 0, SEEK_END);
-  const long size = std::ftell(f);
-  std::fseek(f, 0, SEEK_SET);
-  if (size < 0) {
-    std::fclose(f);
-    if (err != nullptr) *err = "cannot stat " + path;
-    return false;
-  }
-  out->resize(static_cast<size_t>(size));
-  const size_t read =
-      out->empty() ? 0 : std::fread(out->data(), 1, out->size(), f);
-  std::fclose(f);
-  if (read != out->size()) {
-    if (err != nullptr) *err = "short read on " + path;
-    return false;
-  }
-  return true;
-}
-
-int cmdMatrixMetrics(const std::string &input, const std::string &artifacts_dir,
-                     const std::string &report_dir) {
-  Router router;
-  std::string error;
-  Image source;
-  if (!loadImage(router, input, &source, &error)) {
-    std::fprintf(stderr, "error: %s\n", error.c_str());
-    return 1;
-  }
-
-  std::error_code directory_error;
-  std::filesystem::create_directories(report_dir, directory_error);
-  if (directory_error) {
-    std::fprintf(stderr, "error: cannot create metrics report directory: %s\n",
-                 directory_error.message().c_str());
-    return 1;
-  }
-  std::ofstream manifest(std::filesystem::path(report_dir) / "manifest.csv",
-                         std::ios::trunc);
-  if (!manifest) {
-    std::fprintf(stderr, "error: cannot create metrics manifest\n");
-    return 1;
-  }
-  manifest
-      << "backend,format,status,encode_mode,decode_mode,bytes,width,height,"
-         "channels,decode_elapsed_ms,metrics_status,mse,psnr,ssim,"
-         "ms_ssim,metrics_elapsed_ms,error\n"
-      << std::setprecision(17);
-
-  const std::vector<BackendKind> backends = {
-      BackendKind::Cpu, BackendKind::OpenCl, BackendKind::Cuda,
-      BackendKind::Vulkan};
-  struct MatrixFormat final {
-    Format format;
-    const char *name;
-    const char *suffix;
-  };
-  const std::vector<MatrixFormat> formats = {
-      {Format::Jpeg, "jpeg", "jpg"},
-      {Format::Tiff, "tiff", "tiff"},
-      {Format::Png, "png", "png"},
-      {Format::Jpeg2000, "jpeg2000-jp2", "jp2"},
-      {Format::Jpeg2000, "jpeg2000-j2k", "j2k"},
-      {Format::Jpeg2000, "jpeg2000-jpf", "jpf"},
-      {Format::Jpeg2000, "jpeg2000-jpx", "jpx"},
-      {Format::JpegXl, "jpeg-xl", "jxl"},
-  };
-  bool hard_failure = false;
-  for (const BackendKind backend : backends) {
-    for (const MatrixFormat &matrix_format : formats) {
-      const std::string backend_name =
-          image_codec::offload::backendName(backend);
-      const std::string format_name = matrix_format.name;
-      const std::string encode_mode =
-          image_codec::offload::executionModeName(router.executionMode(
-              backend, matrix_format.format, CodecDirection::Encode));
-      const std::string decode_mode =
-          image_codec::offload::executionModeName(router.executionMode(
-              backend, matrix_format.format, CodecDirection::Decode));
-      const auto artifact =
-          std::filesystem::path(artifacts_dir) /
-          (backend_name + "-" + format_name + "." + matrix_format.suffix);
-      std::error_code exists_error;
-      if (!std::filesystem::exists(artifact, exists_error)) {
-        const std::string reason =
-            exists_error ? exists_error.message() : "encoded artifact missing";
-        manifest << backend_name << ',' << format_name
-                 << (exists_error ? ",failed," : ",skipped,") << encode_mode
-                 << ',' << decode_mode << ",0,0,0,0,0,not-run,,,,,0,"
-                 << csvField(reason) << '\n';
-        if (exists_error) hard_failure = true;
-        std::printf("matrix-metrics %-6s %-12s %s: %s\n", backend_name.c_str(),
-                    format_name.c_str(), exists_error ? "failed" : "skipped",
-                    reason.c_str());
-        continue;
-      }
-
-      std::vector<uint8_t> encoded;
-      if (!readFile(artifact.string(), &encoded, &error)) {
-        manifest << backend_name << ',' << format_name << ",failed,"
-                 << encode_mode << ',' << decode_mode
-                 << ",0,0,0,0,0,not-run,,,,,0," << csvField(error) << '\n';
-        hard_failure = true;
-        continue;
-      }
-      const long long decode_start = nowMicros();
-      auto decoded = router.decodeWith(backend, matrix_format.format,
-                                       encoded.data(), encoded.size());
-      const double decode_elapsed =
-          static_cast<double>(nowMicros() - decode_start) / 1000.0;
-      if (!decoded) {
-        const auto status = decoded.error().code;
-        const bool skipped =
-            status == image_codec::offload::Status::BackendUnavailable ||
-            status == image_codec::offload::Status::UnsupportedFormat ||
-            status == image_codec::offload::Status::OutOfMemory;
-        manifest << backend_name << ',' << format_name << ','
-                 << (skipped ? "skipped" : "failed") << ',' << encode_mode
-                 << ',' << decode_mode << ',' << encoded.size() << ",0,0,0,"
-                 << decode_elapsed << ",not-run,,,,,0,"
-                 << csvField(decoded.error().message) << '\n';
-        if (!skipped) hard_failure = true;
-        std::printf("matrix-metrics %-6s %-12s %s: %s\n", backend_name.c_str(),
-                    format_name.c_str(), skipped ? "skipped" : "failed",
-                    decoded.error().message.c_str());
-        continue;
-      }
-      if (decoded->width != source.width || decoded->height != source.height ||
-          decoded->channels != source.channels) {
-        const std::string reason = "decoded geometry/channel mismatch";
-        manifest << backend_name << ',' << format_name << ",failed,"
-                 << encode_mode << ',' << decode_mode << ',' << encoded.size()
-                 << ',' << decoded->width << ',' << decoded->height << ','
-                 << decoded->channels << ',' << decode_elapsed
-                 << ",not-run,,,,,0," << csvField(reason) << '\n';
-        hard_failure = true;
-        continue;
-      }
-
-      const long long metrics_start = nowMicros();
-      auto mse = router.mseWith(backend, source, *decoded);
-      auto ssim = router.ssimWith(backend, source, *decoded);
-      const double metrics_elapsed =
-          static_cast<double>(nowMicros() - metrics_start) / 1000.0;
-      const auto is_skippable_metric_error = [](const auto &metric_error) {
-        return metric_error.code ==
-                   image_codec::offload::Status::BackendUnavailable ||
-               metric_error.code ==
-                   image_codec::offload::Status::UnsupportedFormat ||
-               metric_error.code == image_codec::offload::Status::OutOfMemory;
-      };
-      std::string metrics_error;
-      if (!mse) metrics_error = mse.error().message;
-      if (!ssim) {
-        if (!metrics_error.empty()) metrics_error += "; ";
-        metrics_error += ssim.error().message;
-      }
-      const bool metrics_ok = mse && ssim;
-      const bool metrics_hard_failure =
-          (!mse && !is_skippable_metric_error(mse.error())) ||
-          (!ssim && !is_skippable_metric_error(ssim.error()));
-      const bool metrics_skipped = !metrics_ok && !metrics_hard_failure;
-      const char *metrics_status =
-          metrics_ok ? "passed" : (metrics_skipped ? "skipped" : "failed");
-      manifest << backend_name << ',' << format_name << ','
-               << (metrics_hard_failure ? "failed" : "passed") << ','
-               << encode_mode << ',' << decode_mode << ',' << encoded.size()
-               << ',' << decoded->width << ',' << decoded->height << ','
-               << decoded->channels << ',' << decode_elapsed << ','
-               << metrics_status << ',';
-      if (metrics_ok) {
-        manifest << *mse << ','
-                 << image_codec::offload::metrics::psnrFromMse(*mse) << ','
-                 << ssim->ssim << ',' << ssim->ms_ssim;
-      } else {
-        manifest << ",,,";
-      }
-      manifest << ',' << metrics_elapsed << ',' << csvField(metrics_error)
-               << '\n';
-      if (metrics_hard_failure) hard_failure = true;
-      std::printf("matrix-metrics %-6s %-12s codec=passed metrics=%s\n",
-                  backend_name.c_str(), format_name.c_str(), metrics_status);
-    }
-  }
-  return hard_failure ? 1 : 0;
-}
-
-// 只读文件开头若干字节：用于「先看魔数/BMP 头再决定要不要整套读进来」。
-// Merge.bmp 是 1.9 GB，`ico info` 不该为了打印两行尺寸把它全读进内存。
-bool readPrefix(const std::string &path, size_t max_bytes,
-                std::vector<uint8_t> *out, std::string *err) {
-  std::FILE *f = std::fopen(path.c_str(), "rb");
-  if (f == nullptr) {
-    if (err != nullptr) *err = "cannot open " + path;
-    return false;
-  }
-  out->resize(max_bytes);
-  const size_t read = std::fread(out->data(), 1, max_bytes, f);
-  std::fclose(f);
-  out->resize(read);
-  return true;
-}
-
-bool writeFile(const std::string &path, const std::vector<uint8_t> &data,
-               std::string *err) {
-  std::FILE *f = std::fopen(path.c_str(), "wb");
-  if (f == nullptr) {
-    if (err != nullptr) *err = "cannot create " + path;
-    return false;
-  }
-  const size_t written =
-      data.empty() ? 0 : std::fwrite(data.data(), 1, data.size(), f);
-  std::fclose(f);
-  if (written != data.size()) {
-    if (err != nullptr) *err = "short write on " + path;
-    return false;
-  }
-  return true;
-}
-
-bool hasExtension(const std::string &path, const char *ext) {
-  if (path.size() < std::strlen(ext)) return false;
-  std::string tail = path.substr(path.size() - std::strlen(ext));
-  for (char &c : tail) c = static_cast<char>(std::tolower(c));
-  return tail == ext;
-}
-
-bool isBmp(const std::vector<uint8_t> &data) {
-  return data.size() >= 2 && data[0] == 'B' && data[1] == 'M';
-}
-
-Format formatFromPathOrBytes(const std::string &path,
-                             const std::vector<uint8_t> &data) {
-  const Format probed =
-      image_codec::offload::probeFormat(data.data(), data.size());
-  if (probed != Format::Unknown) return probed;
-
-  const std::size_t dot = path.find_last_of('.');
-  if (dot != std::string::npos) {
-    return image_codec::offload::formatFromExtension(path.substr(dot));
-  }
-  return Format::Unknown;
-}
-
-bool parseBackend(const std::string &value, BackendKind *out) {
-  if (value == "cpu") {
-    *out = BackendKind::Cpu;
-    return true;
-  }
-  if (value == "opencl") {
-    *out = BackendKind::OpenCl;
-    return true;
-  }
-  if (value == "cuda") {
-    *out = BackendKind::Cuda;
-    return true;
-  }
-  if (value == "vulkan") {
-    *out = BackendKind::Vulkan;
-    return true;
-  }
-  return false;
-}
-
-// 读一张图：BMP 走中转格式，其它走路由层解码。
-bool loadImage(Router &router, const std::string &path, Image *out,
-               std::string *err) {
-  std::vector<uint8_t> bytes;
-  if (!readFile(path, &bytes, err)) return false;
-
-  if (isBmp(bytes)) {
-    auto bmp =
-        image_codec::offload::common::readBmp(bytes.data(), bytes.size());
-    if (!bmp) {
-      if (err != nullptr) *err = "bmp: " + bmp.error().message;
-      return false;
-    }
-    *out = std::move(*bmp);
-    return true;
-  }
-
-  const Format format = formatFromPathOrBytes(path, bytes);
-  if (format == Format::Unknown) {
-    if (err != nullptr) *err = "unknown container format: " + path;
-    return false;
-  }
-
-  const auto decoded = router.decode(format, bytes.data(), bytes.size());
-  if (!decoded) {
-    if (err != nullptr) *err = decoded.error().message;
-    return false;
-  }
-  *out = std::move(*decoded);
-  return true;
-}
-
-long long nowMicros() {
-  using clock = std::chrono::steady_clock;
-  return std::chrono::duration_cast<std::chrono::microseconds>(
-             clock::now().time_since_epoch())
-      .count();
 }
 
 void printOutcome(const image_codec::offload::Outcome &outcome) {
@@ -962,7 +479,7 @@ int cmdDecode(const std::string &in, const std::string &out, bool force,
 }
 
 int cmdCompare(const std::string &a_path, const std::string &b_path, bool force,
-               BackendKind kind) {
+               BackendKind kind, double tolerance) {
   image_codec::offload::Router router;
   std::string err;
 
@@ -978,10 +495,17 @@ int cmdCompare(const std::string &a_path, const std::string &b_path, bool force,
   }
 
   // 逐后端把数字并排摆出来：自动模式下这就是「换后端到底换没换数字」的证据。
-  std::printf("%-8s %14s %14s %14s %14s\n", "backend", "mse", "psnr", "ssim",
+  std::printf("%-8s %20s %20s %20s %20s\n", "backend", "mse", "psnr", "ssim",
               "ms-ssim");
 
-  int compared = 0;
+  struct Row final {
+    BackendKind kind;
+    double mse;
+    double psnr;
+    double ssim;
+    double ms_ssim;
+  };
+  std::vector<Row> rows;
   for (BackendKind candidate : router.order()) {
     if (force && candidate != kind) continue;
 
@@ -999,14 +523,40 @@ int cmdCompare(const std::string &a_path, const std::string &b_path, bool force,
       continue;
     }
 
-    std::printf("%-8s %14.9f %14.9f %14.9f %14.9f\n",
+    std::printf("%-8s %20.16g %20.16g %20.16g %20.16g\n",
                 image_codec::offload::backendName(candidate), *mse, *psnr,
                 ssim->ssim, ssim->ms_ssim);
-    ++compared;
+    rows.push_back(Row{candidate, *mse, *psnr, ssim->ssim, ssim->ms_ssim});
   }
 
-  if (compared == 0) {
+  if (rows.empty()) {
     std::fprintf(stderr, "no backend produced a result\n");
+    return 1;
+  }
+
+  // 基准优先取 CPU 参考实现；本次构建没有 CPU 行时退化为「与第一行比」，
+  // 并在输出里写明基准是谁——不写清楚的话，这些数字看起来像是互相独立的证据。
+  const Row *reference = &rows.front();
+  for (const Row &row : rows) {
+    if (row.kind == BackendKind::Cpu) reference = &row;
+  }
+  double deviation = 0.0;
+  const auto track = [&deviation](const double value, const double base) {
+    deviation = std::max(deviation, std::fabs(value - base));
+  };
+  for (const Row &row : rows) {
+    track(row.mse, reference->mse);
+    track(row.psnr, reference->psnr);
+    track(row.ssim, reference->ssim);
+    track(row.ms_ssim, reference->ms_ssim);
+  }
+  std::printf("max deviation vs %s: %.3g (tolerance %.3g)\n",
+              image_codec::offload::backendName(reference->kind), deviation,
+              tolerance);
+  if (!(deviation <= tolerance)) {
+    std::fprintf(stderr,
+                 "error: backends disagree by %.3g, above tolerance %.3g\n",
+                 deviation, tolerance);
     return 1;
   }
   return 0;
@@ -1028,6 +578,26 @@ int main(int argc, char **argv) {
 
   bool force = false;
   BackendKind forced_kind = BackendKind::Cpu;
+
+  MatrixMetricsOptions metrics_options;
+  double tolerance = 1e-9;
+
+  // --only-backend / --only-format 接受逗号分隔或重复给出两种写法：
+  // 大图矩阵一次跑几小时，命令行越短越不容易敲错。
+  const auto splitList = [](const std::string &value) {
+    std::vector<std::string> items;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+      const std::size_t comma = value.find(',', start);
+      const std::string item =
+          value.substr(start, comma == std::string::npos ? std::string::npos
+                                                         : comma - start);
+      if (!item.empty()) items.push_back(item);
+      if (comma == std::string::npos) break;
+      start = comma + 1;
+    }
+    return items;
+  };
 
   std::vector<std::string> positional;
   for (int i = 2; i < argc; ++i) {
@@ -1061,6 +631,40 @@ int main(int argc, char **argv) {
       params.png_compression = std::atoi(next("--png-level"));
     } else if (arg == "--png-filter") {
       params.png_filter = std::atoi(next("--png-filter"));
+    } else if (arg == "--only-backend") {
+      const std::vector<std::string> values = splitList(next("--only-backend"));
+      if (values.empty()) {
+        std::fprintf(stderr, "error: --only-backend needs a value\n");
+        return 1;
+      }
+      for (const std::string &value : values) {
+        BackendKind kind = BackendKind::Cpu;
+        if (!parseBackend(value, &kind)) {
+          std::fprintf(stderr, "error: unknown backend: %s\n", value.c_str());
+          return 1;
+        }
+        metrics_options.backends.push_back(kind);
+      }
+    } else if (arg == "--only-format") {
+      const std::vector<std::string> values = splitList(next("--only-format"));
+      if (values.empty()) {
+        std::fprintf(stderr, "error: --only-format needs a value\n");
+        return 1;
+      }
+      metrics_options.formats.insert(metrics_options.formats.end(),
+                                     values.begin(), values.end());
+    } else if (arg == "--resume") {
+      metrics_options.resume = true;
+    } else if (arg == "--tolerance") {
+      tolerance = std::atof(next("--tolerance"));
+    } else if (arg == "--metrics-backend") {
+      const std::string value = next("--metrics-backend");
+      BackendKind kind = BackendKind::Cpu;
+      if (!parseBackend(value, &kind)) {
+        std::fprintf(stderr, "error: unknown backend: %s\n", value.c_str());
+        return 1;
+      }
+      metrics_options.metrics_backend = kind;
     } else if (arg == "-h" || arg == "--help") {
       printUsage();
       return 0;
@@ -1116,7 +720,8 @@ int main(int argc, char **argv) {
       printUsage();
       return 1;
     }
-    return cmdCompare(positional[0], positional[1], force, forced_kind);
+    return cmdCompare(positional[0], positional[1], force, forced_kind,
+                      tolerance);
   }
 
   if (command == "matrix") {
@@ -1132,7 +737,8 @@ int main(int argc, char **argv) {
       printUsage();
       return 1;
     }
-    return cmdMatrixMetrics(positional[0], positional[1], positional[2]);
+    return cmdMatrixMetrics(positional[0], positional[1], positional[2],
+                            metrics_options);
   }
 
   std::fprintf(stderr, "error: unknown command: %s\n", command.c_str());
