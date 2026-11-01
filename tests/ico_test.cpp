@@ -2154,6 +2154,14 @@ void testTiffStripSharding() {
     }
     if (payloads.empty()) continue;
 
+    // TIFF 分片是存图管线的**默认**路径（`stripSharding` 默认开），所以这条
+    // 记录会出现在每一张 TIFF 上。漏传 format 时它会一律写成「unavailable」，
+    // 界面看着像「没有可用后端」，而 CPU 恰恰正在编。
+    int strip_mode = ICO_EXECUTION_UNAVAILABLE;
+    check(image_codec_offload_last_execution_mode(cpu, &strip_mode) == ICO_OK &&
+              strip_mode == ICO_EXECUTION_CPU,
+          "tiff strip encode reports its real execution mode");
+
     std::vector<const void *> pointers;
     std::vector<size_t> sizes;
     for (const auto &payload : payloads) {

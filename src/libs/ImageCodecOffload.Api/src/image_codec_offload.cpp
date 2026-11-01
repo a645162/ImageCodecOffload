@@ -639,7 +639,11 @@ ico_status image_codec_offload_tiff_strip_encode(
           : codec->router.encodeTiffStrip(image, first_row, rows,
                                           toParams(params), &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
-  record(codec, outcome);
+  // 必须带上 Format::Tiff：存图管线的 stripSharding 默认开着，TIFF 分片是
+  // **默认**路径，漏传 format 会让 last_execution_mode 一律落成
+  // ICO_EXECUTION_UNAVAILABLE，界面把每条记录写成「cpu/unavailable」——
+  // 看着像「没有可用后端」，其实 CPU 正在编。
+  record(codec, outcome, Format::Tiff);
   if (!encoded) return mapStatus(encoded.error().code);
 
   if (out == nullptr || out_capacity < encoded->size()) {
