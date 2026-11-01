@@ -79,7 +79,9 @@ typedef enum ico_execution_mode {
   ICO_EXECUTION_UNAVAILABLE = 0,
   ICO_EXECUTION_CPU = 1,
   ICO_EXECUTION_HYBRID_CPU_GPU = 2,
-  ICO_EXECUTION_NATIVE_GPU = 3
+  ICO_EXECUTION_NATIVE_GPU = 3,
+  /* GPU performed data staging only; no codec pixel stage ran on the device. */
+  ICO_EXECUTION_GPU_STAGING_ONLY = 4
 } ico_execution_mode;
 
 // JPEG 2000 输出容器。JP2/JPF/JPX 使用 ICO_JPEG2000_CONTAINER_JP2；

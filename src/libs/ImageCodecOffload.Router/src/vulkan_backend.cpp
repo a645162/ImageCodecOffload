@@ -140,6 +140,9 @@ public:
   }
 
   ExecutionMode executionMode(Format format) const override {
+    if (supports(format) &&
+        (format == Format::Jpeg2000 || format == Format::JpegXl))
+      return ExecutionMode::GpuStagingOnly;
     return supports(format) ? ExecutionMode::HybridCpuGpu
                             : ExecutionMode::Unavailable;
   }

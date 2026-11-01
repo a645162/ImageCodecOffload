@@ -117,6 +117,7 @@ enum class ExecutionMode {
   Cpu = 1,
   HybridCpuGpu = 2,
   NativeGpu = 3,
+  GpuStagingOnly = 4,
 };
 
 const char *executionModeName(ExecutionMode mode);

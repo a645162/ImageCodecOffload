@@ -615,8 +615,8 @@ void testGpuHybridNewFormatRoundtrip() {
         continue;
       }
       check(router.executionMode(backend, format) ==
-                ExecutionMode::HybridCpuGpu,
-            "gpu new format reports hybrid execution mode");
+                ExecutionMode::GpuStagingOnly,
+            "gpu new format reports staging-only execution mode");
       const auto encoded =
           router.encodeWith(backend, format, source, EncodeParams{});
       if (!encoded) {

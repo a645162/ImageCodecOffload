@@ -144,7 +144,11 @@ public:
   ExecutionMode executionMode(Format format) const override {
     if (!supports(format)) return ExecutionMode::Unavailable;
     // JPEG encode and decode are both handled end-to-end by nvJPEG/NVJPG.
-    // JP2/JXL use CPU bitstream codecs with CUDA staging; TIFF/PNG split work.
+    // JP2/JXL currently only round-trip bytes through device memory; no codec
+    // pixel stage is implemented, so do not advertise these paths as Hybrid.
+    if (format == Format::Jpeg2000 || format == Format::JpegXl)
+      return ExecutionMode::GpuStagingOnly;
+    // TIFF/PNG split work.
     return format == Format::Jpeg ? ExecutionMode::NativeGpu
                                   : ExecutionMode::HybridCpuGpu;
   }

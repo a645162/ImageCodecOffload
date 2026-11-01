@@ -251,6 +251,8 @@ int toIcoExecutionMode(const ExecutionMode mode) {
     return ICO_EXECUTION_HYBRID_CPU_GPU;
   case ExecutionMode::NativeGpu:
     return ICO_EXECUTION_NATIVE_GPU;
+  case ExecutionMode::GpuStagingOnly:
+    return ICO_EXECUTION_GPU_STAGING_ONLY;
   case ExecutionMode::Unavailable:
     return ICO_EXECUTION_UNAVAILABLE;
   }

@@ -194,6 +194,8 @@ const char *executionModeName(ExecutionMode mode) {
     return "hybrid-cpu-gpu";
   case ExecutionMode::NativeGpu:
     return "native-gpu";
+  case ExecutionMode::GpuStagingOnly:
+    return "gpu-staging-only";
   }
   return "unavailable";
 }

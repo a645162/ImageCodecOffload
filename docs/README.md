@@ -29,10 +29,10 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 
 | 子项目 | 用途 | C API 前缀 | 依赖 |
 |--------|------|-----------|------|
-| `ImageCodecCUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库；JP2/JXL 提供 GPU staging 的 Hybrid 路径 | `image_codec_cuda_*`（`<ImageCodecCUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
-| `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU）；JP2/JXL 提供 GPU staging 的 Hybrid 路径 | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
+| `ImageCodecCUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库；JP2/JXL 当前仅 GPU staging | `image_codec_cuda_*`（`<ImageCodecCUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
+| `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU）；JP2/JXL 当前仅 GPU staging | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
 | `ImageCodecPlatform` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | 构建期仅 oneVPL 头（`3rdparty/libvpl`）；运行期 `libvpl2` + `libmfx-gen1.2`（vpl-gpu-rt）+ `intel-media-va-driver`（Windows：Intel 显卡驱动自带 `libvpl.dll`/`libmfx-gen.dll`）。Linux / Windows 双平台，帧只走系统内存 |
-| `ImageCodecVulkan` | Vulkan compute 编解码：TIFF（容器 + LZW(CPU) + Predictor=2(GPU)）、PNG（行滤波 GPU + DEFLATE(CPU)）、baseline JPEG（Huffman/容器 CPU + DCT/颜色变换 GPU）、画质指标（fp64）；JP2/JXL 提供设备 staging 的 Hybrid 路径；另含 Win32 external-memory → OpenGL 互操作（仅 Windows） | `image_codec_vulkan_*`（`<VulkanImageCodec/image_codec_vulkan.h>`） | Vulkan SDK / vcpkg `vulkan`；vcpkg `glslang` 库（构建期编译 shader） |
+| `ImageCodecVulkan` | Vulkan compute 编解码：TIFF（容器 + LZW(CPU) + Predictor=2(GPU)）、PNG（行滤波 GPU + DEFLATE(CPU)）、baseline JPEG（Huffman/容器 CPU + DCT/颜色变换 GPU）、画质指标（fp64）；JP2/JXL 当前仅设备 staging；另含 Win32 external-memory → OpenGL 互操作（仅 Windows） | `image_codec_vulkan_*`（`<VulkanImageCodec/image_codec_vulkan.h>`） | Vulkan SDK / vcpkg `vulkan`；vcpkg `glslang` 库（构建期编译 shader） |
 
 ## 能力矩阵（现状）
 
@@ -41,8 +41,8 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 | JPEG | Native GPU：编码/解码（nvJPEG，1 或 3 通道；2/4 明确拒绝） | Hybrid：编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | Hybrid：编码/解码（1 或 3 通道，子采样可指定；2/4 明确拒绝） | CPU 编码/解码（1 或 3 通道；2/4 明确拒绝） |
 | TIFF | 编码/解码（LZW/none，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道） | 编码/解码（none/LZW，strip 与 tiled，1/2/3/4 通道；Predictor=2 在 GPU，LZW 在 CPU） | 编码/解码（1/2/3/4 通道） |
 | PNG | 编码/解码（1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（行滤波 GPU + DEFLATE CPU，1/2/3/4 通道） | 编码/解码（1/2/3/4 通道） |
-| JPEG 2000（JP2/J2K/JPF/JPX） | Hybrid：OpenJPEG 码流 + CUDA staging | Hybrid：OpenJPEG 码流 + OpenCL staging | Hybrid：OpenJPEG 码流 + Vulkan staging | 编码/解码（OpenJPEG） |
-| JPEG XL（JXL） | Hybrid：libjxl 码流 + CUDA staging | Hybrid：libjxl 码流 + OpenCL staging | Hybrid：libjxl 码流 + Vulkan staging | 编码/解码（libjxl） |
+| JPEG 2000（JP2/J2K/JPF/JPX） | 仅 GPU staging：OpenJPEG 编/解码 | 仅 GPU staging：OpenJPEG 编/解码 | 仅 GPU staging：OpenJPEG 编/解码 | 编码/解码（OpenJPEG） |
+| JPEG XL（JXL） | 仅 GPU staging：libjxl 编/解码 | 仅 GPU staging：libjxl 编/解码 | 仅 GPU staging：libjxl 编/解码 | 编码/解码（libjxl） |
 | MSE/PSNR/SSIM/MS-SSIM | 有 | 有 | 有（要求 `shaderFloat64`，没有即明确失败并回退 CPU 指标） | 有（参考实现） |
 
 能力查询按“格式 × 编码/解码方向 × 执行模式”表达。`Router::supports(kind, format, direction)`
@@ -50,6 +50,10 @@ src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
 `probeBackends()` 单独报告。因而设备缺失时可以同时显示“设备不可用”和“该方向已实现”，
 不会把运行时设备状态误报成格式/方向不支持。GPU 设备已就绪时，方向能力则依据后端实际能力表，
 例如缺少 nvJPEG 编码或解码的一侧会独立标记为不支持。
+
+JP2/JXL GPU adapter 当前只把像素缓冲上传再读回，没有执行格式相关的 GPU 像素算法；执行模式
+因此报告为 `gpu-staging-only`，不是 Hybrid。后续只有加入并验证颜色变换、分块、重采样等实际
+GPU 像素阶段后，才可报告 Hybrid；Native GPU 还要求码流阶段也完整在 GPU 上完成。
 
 格式目录中的流式能力也按方向记录。当前 TIFF 条带输出、JPEG 2000 tile 行输入与 JPEG XL
 chunked 行输入均属于编码能力；不能据此推导这些格式支持流式解码。JP2/JXL 解码目前仍走整图
