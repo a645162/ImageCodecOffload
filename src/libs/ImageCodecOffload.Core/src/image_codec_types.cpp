@@ -78,7 +78,7 @@ const std::vector<FormatDescriptor> &formatDescriptors() {
        true, true, true, true},
       {Format::JpegXl, "JPEG XL", "新一代 JPEG XL 图像格式。", {".jxl"},
        {"image/jxl"}, kUint32Max, kUint32Max, kImageDimensionMax,
-       kImageDimensionMax, true, true, true, true, false},
+       kImageDimensionMax, true, true, true, true, true},
   };
   return descriptors;
 }

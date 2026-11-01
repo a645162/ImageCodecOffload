@@ -14,6 +14,7 @@
 //   3. 指标与另外两个子项目给出**同一个数字**（golden 值）；
 //   4. 每个可用后端的指标与 CPU 参考逐项对拍；回退路径必须留下具体原因。
 #include <cmath>
+#include <atomic>
 #include <cstdio>
 #include <cstdint>
 #include <filesystem>
@@ -28,6 +29,7 @@
 
 #include "bmp_io.h"
 #include "image_codec_types.h"
+#include "jpegxl_io.h"
 #include "metrics.h"
 #include "openjpeg_io.h"
 #include "router.h"
@@ -81,16 +83,17 @@ Image makeImage(int w, int h, int c);
 void testFormatCatalogAndProbe() {
   const auto &descriptors = image_codec::offload::formatDescriptors();
   check(descriptors.size() == 5, "format catalog has five formats");
-  const auto *jpeg2000 = image_codec::offload::formatDescriptor(Format::Jpeg2000);
+  const auto *jpeg2000 =
+      image_codec::offload::formatDescriptor(Format::Jpeg2000);
   check(jpeg2000 != nullptr, "jpeg2000 descriptor");
   if (jpeg2000 != nullptr) {
     check(jpeg2000->theoreticalMaxWidth ==
-              std::numeric_limits<uint32_t>::max() &&
+                  std::numeric_limits<uint32_t>::max() &&
               jpeg2000->theoreticalMaxHeight ==
                   std::numeric_limits<uint32_t>::max(),
           "jpeg2000 exposes 32-bit container dimensions");
     check(jpeg2000->implementationMaxWidth ==
-              static_cast<uint64_t>(std::numeric_limits<int>::max()) &&
+                  static_cast<uint64_t>(std::numeric_limits<int>::max()) &&
               jpeg2000->implementationMaxHeight ==
                   static_cast<uint64_t>(std::numeric_limits<int>::max()),
           "jpeg2000 is bounded by the public image model");
@@ -101,15 +104,16 @@ void testFormatCatalogAndProbe() {
   check(jpegXl != nullptr, "jpeg-xl descriptor");
   if (jpegXl != nullptr) {
     check(jpegXl->theoreticalMaxWidth == std::numeric_limits<uint32_t>::max() &&
-              jpegXl->theoreticalMaxHeight == std::numeric_limits<uint32_t>::max(),
+              jpegXl->theoreticalMaxHeight ==
+                  std::numeric_limits<uint32_t>::max(),
           "jpeg-xl exposes 32-bit container dimensions");
     check(jpegXl->implementationMaxWidth ==
-              static_cast<uint64_t>(std::numeric_limits<int>::max()) &&
+                  static_cast<uint64_t>(std::numeric_limits<int>::max()) &&
               jpegXl->implementationMaxHeight ==
                   static_cast<uint64_t>(std::numeric_limits<int>::max()),
           "jpeg-xl is bounded by the public image model");
-    check(!jpegXl->streaming,
-          "jpeg-xl catalog does not claim unsupported row streaming");
+    check(jpegXl->streaming,
+          "jpeg-xl catalog reports chunked row input support");
   }
   check(image_codec::offload::formatFromExtension("JP2") == Format::Jpeg2000,
         "jp2 extension");
@@ -119,12 +123,12 @@ void testFormatCatalogAndProbe() {
         "jpx extension");
   check(image_codec::offload::formatFromExtension("jxl") == Format::JpegXl,
         "jxl extension");
-  const uint8_t jp2[] = {0x00, 0x00, 0x00, 0x0C, 'j', 'P', ' ', ' ', 0x0D,
-                         0x0A, 0x87, 0x0A};
+  const uint8_t jp2[] = {0x00, 0x00, 0x00, 0x0C, 'j',  'P',
+                         ' ',  ' ',  0x0D, 0x0A, 0x87, 0x0A};
   check(image_codec::offload::probeFormat(jp2, sizeof(jp2)) == Format::Jpeg2000,
         "jp2 signature");
-  const uint8_t jxl[] = {0x00, 0x00, 0x00, 0x0C, 'J', 'X', 'L', ' ', 0x0D,
-                         0x0A, 0x87, 0x0A};
+  const uint8_t jxl[] = {0x00, 0x00, 0x00, 0x0C, 'J',  'X',
+                         'L',  ' ',  0x0D, 0x0A, 0x87, 0x0A};
   check(image_codec::offload::probeFormat(jxl, sizeof(jxl)) == Format::JpegXl,
         "jxl signature");
 
@@ -154,8 +158,8 @@ void testExecutionModeContract() {
   check(std::string(image_codec::offload::executionModeName(
             ExecutionMode::HybridCpuGpu)) == "hybrid-cpu-gpu",
         "execution mode has stable display name");
-  for (const BackendKind kind : {BackendKind::OpenCl, BackendKind::Cuda,
-                                 BackendKind::Vulkan}) {
+  for (const BackendKind kind :
+       {BackendKind::OpenCl, BackendKind::Cuda, BackendKind::Vulkan}) {
     if (!router.supports(kind, Format::Jpeg)) {
       check(router.executionMode(kind, Format::Jpeg) ==
                 ExecutionMode::Unavailable,
@@ -199,8 +203,8 @@ void testJpeg2000CpuRoundtrip() {
   Router router;
   const Image source = makeImage(37, 23, 3);
   EncodeParams params;
-  auto encoded = router.encodeWith(BackendKind::Cpu, Format::Jpeg2000,
-                                   source, params);
+  auto encoded =
+      router.encodeWith(BackendKind::Cpu, Format::Jpeg2000, source, params);
   if (!encoded) {
     check(encoded.error().code == Status::BackendUnavailable,
           "jpeg2000 is either available or explicitly unavailable");
@@ -219,9 +223,8 @@ void testJpeg2000CpuRoundtrip() {
   // .jp2/.jpf/.jpx 都使用 JP2 家族容器。矩阵将以三个文件后缀分别落盘，
   // 这里锁住它们的共同码流语义，避免后续只测了扩展名却改坏实际容器。
   for (const char *label : {"jp2", "jpf", "jpx"}) {
-    const auto jp2_family = router.encodeWith(BackendKind::Cpu,
-                                              Format::Jpeg2000, source,
-                                              EncodeParams{});
+    const auto jp2_family = router.encodeWith(
+        BackendKind::Cpu, Format::Jpeg2000, source, EncodeParams{});
     check(static_cast<bool>(jp2_family), "jp2-family cpu encode");
     if (!jp2_family) continue;
     check(jp2_family->size() >= 12 && (*jp2_family)[4] == 'j' &&
@@ -236,8 +239,8 @@ void testJpeg2000CpuRoundtrip() {
 
   EncodeParams j2k_params;
   j2k_params.jpeg2000_container = Jpeg2000Container::J2k;
-  auto j2k = router.encodeWith(BackendKind::Cpu, Format::Jpeg2000, source,
-                               j2k_params);
+  auto j2k =
+      router.encodeWith(BackendKind::Cpu, Format::Jpeg2000, source, j2k_params);
   check(static_cast<bool>(j2k), "j2k codestream cpu encode");
   if (j2k) {
     check(j2k->size() >= 4 && (*j2k)[0] == 0xff && (*j2k)[1] == 0x4f &&
@@ -257,7 +260,7 @@ void testJpeg2000CpuRoundtrip() {
 
 void testJpeg2000RowStreaming() {
   constexpr int kWidth = 41;
-  constexpr int kHeight = 301;  // Crosses the 256-row tile boundary.
+  constexpr int kHeight = 301; // Crosses the 256-row tile boundary.
   constexpr int kChannels = 3;
   const Image source = makeImage(kWidth, kHeight, kChannels);
   const auto path = std::filesystem::temp_directory_path() /
@@ -306,7 +309,7 @@ void testJpeg2000RowStreaming() {
 
 void testJpeg2000RowStreamingCapi() {
   constexpr int kWidth = 37;
-  constexpr int kHeight = 263;  // Crosses the tile boundary.
+  constexpr int kHeight = 263; // Crosses the tile boundary.
   constexpr int kChannels = 3;
   const Image source = makeImage(kWidth, kHeight, kChannels);
   const auto path = std::filesystem::temp_directory_path() /
@@ -403,11 +406,109 @@ void testJpegXlCpuRoundtrip() {
   }
 }
 
+void testJpegXlChunkedRowEncoding() {
+  constexpr int kWidth = 37;
+  constexpr int kHeight = 29;
+  const Image source = makeImage(kWidth, kHeight, 3);
+  std::atomic<int> rowsRequested = 0;
+  const auto encoded = image_codec::offload::cpu::encodeJpegXlRows(
+      kWidth, kHeight, 3,
+      [&source, &rowsRequested](const int y, std::span<uint8_t> destination)
+          -> image_codec::offload::Result<void> {
+        if (y < 0 || y >= source.height ||
+            destination.size() != source.rowBytes()) {
+          return image_codec::offload::fail<void>(
+              Status::InvalidArgument, "test JXL row range is invalid");
+        }
+        std::copy_n(source.pixels.data() +
+                        static_cast<size_t>(y) * source.rowBytes(),
+                    source.rowBytes(), destination.data());
+        ++rowsRequested;
+        return {};
+      });
+  if (!encoded) {
+    check(encoded.error().code == Status::BackendUnavailable,
+          "jpeg-xl chunked encoding is available when libjxl is built");
+    return;
+  }
+  check(!encoded->empty(), "jpeg-xl chunked input produces a codestream");
+  check(rowsRequested > 0 && rowsRequested <= kHeight * 8,
+        "jpeg-xl chunked encoder requests bounded source rows");
+  Router router;
+  const auto decoded = router.decodeWith(BackendKind::Cpu, Format::JpegXl,
+                                         encoded->data(), encoded->size());
+  check(static_cast<bool>(decoded), "jpeg-xl chunked output decodes");
+  if (decoded) {
+    check(decoded->width == kWidth && decoded->height == kHeight &&
+              decoded->channels == 3,
+          "jpeg-xl chunked output preserves geometry and channels");
+  }
+}
+
+void testJpegXlChunkedRowCapi() {
+  constexpr int kWidth = 31;
+  constexpr int kHeight = 23;
+  const Image source = makeImage(kWidth, kHeight, 3);
+  const auto path = std::filesystem::temp_directory_path() /
+                    "imagecodec-jpegxl-row-streaming.jxl";
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
+  ico_codec *codec = nullptr;
+  check(image_codec_offload_create_forced(&codec, ICO_BACKEND_CPU) == ICO_OK &&
+            codec != nullptr,
+        "create forced CPU codec for jpeg-xl chunked input");
+  if (codec == nullptr) return;
+  StreamingRowReaderState state{.image = &source};
+  const auto status = image_codec_offload_encode_jpegxl_rows(
+      codec, path.string().c_str(), kWidth, kHeight, 3, readStreamingRow,
+      &state);
+  if (status != ICO_OK) {
+    check(status == ICO_ERR_BACKEND_UNAVAILABLE,
+          "jpeg-xl row C API is available when libjxl is built");
+    image_codec_offload_destroy(codec);
+    std::filesystem::remove(path, ignored);
+    return;
+  }
+  check(state.rowsRead > 0,
+        "jpeg-xl row C API requests input through the row callback");
+  int mode = ICO_EXECUTION_UNAVAILABLE;
+  check(image_codec_offload_last_execution_mode(codec, &mode) == ICO_OK &&
+            mode == ICO_EXECUTION_CPU,
+        "jpeg-xl row C API reports CPU execution");
+  std::ifstream input(path, std::ios::binary);
+  const std::vector<uint8_t> encoded((std::istreambuf_iterator<char>(input)),
+                                     std::istreambuf_iterator<char>());
+  std::filesystem::remove(path, ignored);
+  check(!encoded.empty(), "jpeg-xl row C API writes output");
+  Router router;
+  const auto decoded = router.decodeWith(BackendKind::Cpu, Format::JpegXl,
+                                         encoded.data(), encoded.size());
+  check(static_cast<bool>(decoded), "jpeg-xl row C API output decodes");
+  if (decoded) {
+    check(decoded->width == kWidth && decoded->height == kHeight &&
+              decoded->channels == 3,
+          "jpeg-xl row C API preserves geometry and channels");
+  }
+
+  const auto failurePath = std::filesystem::temp_directory_path() /
+                           "imagecodec-jpegxl-row-streaming-failure.jxl";
+  std::filesystem::remove(failurePath, ignored);
+  StreamingRowReaderState failingState{.image = &source, .failAtRow = 5};
+  const auto failureStatus = image_codec_offload_encode_jpegxl_rows(
+      codec, failurePath.string().c_str(), kWidth, kHeight, 3, readStreamingRow,
+      &failingState);
+  check(failureStatus == ICO_ERR_IO,
+        "jpeg-xl row C API preserves a source I/O error");
+  check(!std::filesystem::exists(failurePath),
+        "jpeg-xl row C API does not create output after a source error");
+  image_codec_offload_destroy(codec);
+}
+
 void testGpuHybridNewFormatRoundtrip() {
   Router router;
   const Image source = makeImage(29, 17, 3);
-  for (const BackendKind backend : {BackendKind::OpenCl, BackendKind::Cuda,
-                                    BackendKind::Vulkan}) {
+  for (const BackendKind backend :
+       {BackendKind::OpenCl, BackendKind::Cuda, BackendKind::Vulkan}) {
     for (const Format format : {Format::Jpeg2000, Format::JpegXl}) {
       if (!router.supports(backend, format)) {
         check(router.executionMode(backend, format) ==
@@ -430,7 +531,8 @@ void testGpuHybridNewFormatRoundtrip() {
           router.decodeWith(backend, format, encoded->data(), encoded->size());
       check(static_cast<bool>(decoded), "gpu new format decoded output");
       if (decoded) {
-        check(decoded->width == source.width && decoded->height == source.height,
+        check(decoded->width == source.width &&
+                  decoded->height == source.height,
               "gpu new format geometry");
         check(decoded->channels == source.channels, "gpu new format channels");
       }
@@ -1369,8 +1471,7 @@ void testTiffAdvancedParams() {
     without_pred.tiff_compression = compression;
     EncodeParams with_pred = without_pred;
     with_pred.tiff_predictor = 2;
-    const auto plain_bytes =
-        encodeCpu(router, Format::Tiff, src, without_pred);
+    const auto plain_bytes = encodeCpu(router, Format::Tiff, src, without_pred);
     const auto pred_bytes = encodeCpu(router, Format::Tiff, src, with_pred);
     check(!plain_bytes.empty() && plain_bytes == pred_bytes,
           "predictor is a no-op for compressions without a predictor");
@@ -1628,9 +1729,9 @@ void testForcedCapabilitiesMatchBackend() {
       params.jpeg_progressive = 1;
       std::vector<uint8_t> out(src.pixels.size() * 4);
       size_t out_len = out.size();
-      const ico_status status = image_codec_offload_encode(
-          codec, ICO_FORMAT_JPEG, &image, &params, out.data(), &out_len,
-          out.size());
+      const ico_status status =
+          image_codec_offload_encode(codec, ICO_FORMAT_JPEG, &image, &params,
+                                     out.data(), &out_len, out.size());
       check(status == ICO_ERR_UNSUPPORTED_FORMAT,
             "forced backend rejects advanced params it does not declare");
     }
@@ -1718,8 +1819,8 @@ void testCapiAdvancedParams() {
   png_defaults.png_compression = -1;
   png_defaults.png_filter = -1;
   const auto png_via_c = encode(ICO_FORMAT_PNG, png_defaults);
-  const auto png_via_cpp = router.encodeWith(BackendKind::Cpu, Format::Png,
-                                             src, EncodeParams{});
+  const auto png_via_cpp =
+      router.encodeWith(BackendKind::Cpu, Format::Png, src, EncodeParams{});
   check(!png_via_c.empty(), "c api png encode with explicit -1 defaults");
   check(png_via_cpp && png_via_c == *png_via_cpp,
         "explicit -1 must equal internal png defaults");
@@ -1732,9 +1833,9 @@ void testCapiAdvancedParams() {
   check(png_literal_bytes != png_via_c,
         "png level 0 + filter none really applies");
   {
-    const auto decoded = router.decodeWith(BackendKind::Cpu, Format::Png,
-                                           png_literal_bytes.data(),
-                                           png_literal_bytes.size());
+    const auto decoded =
+        router.decodeWith(BackendKind::Cpu, Format::Png,
+                          png_literal_bytes.data(), png_literal_bytes.size());
     check(static_cast<bool>(decoded) && decoded->pixels == src.pixels,
           "png level 0 stays lossless");
   }
@@ -1768,9 +1869,8 @@ void testCapiAdvancedParams() {
   size_t j2k_size = j2k_bytes.size();
   const ico_encode_params j2k_params{};
   const auto j2k_status = image_codec_offload_encode_ex(
-      cpu, ICO_FORMAT_JPEG2000, &image, &j2k_params,
-      ICO_JPEG2000_CONTAINER_J2K, j2k_bytes.data(), &j2k_size,
-      j2k_bytes.size());
+      cpu, ICO_FORMAT_JPEG2000, &image, &j2k_params, ICO_JPEG2000_CONTAINER_J2K,
+      j2k_bytes.data(), &j2k_size, j2k_bytes.size());
   check(j2k_status == ICO_OK, "c api extended jpeg2000 encode succeeds");
   j2k_bytes.resize(j2k_status == ICO_OK ? j2k_size : 0U);
   if (!j2k_bytes.empty()) {
@@ -1782,14 +1882,13 @@ void testCapiAdvancedParams() {
   std::vector<uint8_t> invalid_output(src.pixels.size() * 4U);
   size_t invalid_size = invalid_output.size();
   check(image_codec_offload_encode_ex(cpu, ICO_FORMAT_JPEG2000, &image, nullptr,
-                                   99, invalid_output.data(), &invalid_size,
-                                   invalid_output.size()) ==
+                                      99, invalid_output.data(), &invalid_size,
+                                      invalid_output.size()) ==
             ICO_ERR_INVALID_ARGUMENT,
         "c api rejects an unknown jpeg2000 container");
 
   image_codec_offload_destroy(cpu);
 }
-
 
 // ---- TIFF 分片：与整图编码**逐字节相同** ----
 //
@@ -1836,8 +1935,8 @@ void testTiffStripSharding() {
     for (const int compression : {1, 5, 8, 32773}) {
       for (const int predictor : {-1, 2}) {
         for (const int rps : {16, 31}) {
-          cases.push_back({compression, predictor, rps, channels,
-                           (rps == 31 ? 300 : 0)});
+          cases.push_back(
+              {compression, predictor, rps, channels, (rps == 31 ? 300 : 0)});
         }
       }
     }
@@ -1845,7 +1944,8 @@ void testTiffStripSharding() {
 
   int compared = 0;
   for (const Case &item : cases) {
-    const Image frame = (item.channels == 3) ? src : makeImage(96, 80, item.channels);
+    const Image frame =
+        (item.channels == 3) ? src : makeImage(96, 80, item.channels);
 
     ico_image frame_image{};
     frame_image.width = static_cast<uint32_t>(frame.width);
@@ -1869,8 +1969,8 @@ void testTiffStripSharding() {
     internal.tiff_predictor = item.predictor;
     internal.tiff_x_dpi = item.dpi;
     internal.tiff_y_dpi = item.dpi;
-    const auto whole = router.encodeWith(BackendKind::Cpu, Format::Tiff, frame,
-                                         internal);
+    const auto whole =
+        router.encodeWith(BackendKind::Cpu, Format::Tiff, frame, internal);
     if (!whole) {
       std::printf("strip sharding: whole encode failed (comp=%d)\n",
                   item.compression);
@@ -1892,8 +1992,9 @@ void testTiffStripSharding() {
           cpu, &frame_image, first_row, rows, &params, buffer.data(), &length,
           buffer.size());
       if (status != ICO_OK) {
-        std::printf("strip sharding: strip encode failed (comp=%d ch=%d s=%d)\n",
-                    item.compression, item.channels, status);
+        std::printf(
+            "strip sharding: strip encode failed (comp=%d ch=%d s=%d)\n",
+            item.compression, item.channels, status);
         check(false, "strip encode must succeed for a supported compression");
         payloads.clear();
         break;
@@ -1920,8 +2021,9 @@ void testTiffStripSharding() {
     std::vector<uint8_t> assembled(whole->size() + 4096);
     size_t assembled_len = assembled.size();
     const ico_status status = image_codec_offload_tiff_assemble(
-        &assembly, pointers.data(), sizes.data(), static_cast<int>(sizes.size()),
-        assembled.data(), &assembled_len, assembled.size());
+        &assembly, pointers.data(), sizes.data(),
+        static_cast<int>(sizes.size()), assembled.data(), &assembled_len,
+        assembled.size());
     check(status == ICO_OK, "tiff assemble succeeds");
     if (status != ICO_OK) continue;
     assembled.resize(assembled_len);
@@ -1954,20 +2056,17 @@ void testTiffStripSharding() {
     ico_encode_params jpeg_in_tiff{};
     jpeg_in_tiff.tiff_compression = 7; // 依赖 JPEGTABLES 共享量化表
     length = buffer.size();
-    check(image_codec_offload_tiff_strip_encode(cpu, &image, 0, 16,
-                                                &jpeg_in_tiff, buffer.data(),
-                                                &length,
-                                                buffer.size()) ==
-              ICO_ERR_UNSUPPORTED_FORMAT,
+    check(image_codec_offload_tiff_strip_encode(
+              cpu, &image, 0, 16, &jpeg_in_tiff, buffer.data(), &length,
+              buffer.size()) == ICO_ERR_UNSUPPORTED_FORMAT,
           "jpeg-in-tiff is rejected for strip sharding");
 
     ico_encode_params plain{};
     plain.tiff_compression = 5;
     length = buffer.size();
-    check(image_codec_offload_tiff_strip_encode(cpu, &image, 60, 40, &plain,
-                                                buffer.data(), &length,
-                                                buffer.size()) ==
-              ICO_ERR_INVALID_ARGUMENT,
+    check(image_codec_offload_tiff_strip_encode(
+              cpu, &image, 60, 40, &plain, buffer.data(), &length,
+              buffer.size()) == ICO_ERR_INVALID_ARGUMENT,
           "out-of-range strip row range is rejected");
 
     std::vector<std::vector<uint8_t>> one;
@@ -2114,6 +2213,8 @@ int main() {
   testJpeg2000RowStreamingCapi();
   testJpeg2000RowStreamingCapiPropagatesReaderError();
   testJpegXlCpuRoundtrip();
+  testJpegXlChunkedRowEncoding();
+  testJpegXlChunkedRowCapi();
   testGpuHybridNewFormatRoundtrip();
   testBmpRoundtrip();
   testCpuRoundtrip();

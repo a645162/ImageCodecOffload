@@ -186,9 +186,12 @@ CPU 没有可移植、可靠的“当前可安全分配内存”计数器，因�
 临时文件，再在成功后执行自己的原子替换。
 
 这个入口**固定是 CPU/OpenJPEG**，`last_execution_mode` 会报告 `CPU`，不会初始化或
-冒充 OpenCL/CUDA/Vulkan staging。JPEG XL 目前没有等价的行输入契约，仍明确拒绝
-流式输出；不得为了“支持流式”而在调用方或库内暗中聚合整幅图。
-行回调返回的非 `ICO_OK` 状态会原样返回给调用方，并删除部分输出；不会被笼统改写成
+冒充 OpenCL/CUDA/Vulkan staging。JPEG XL 使用 libjxl 的
+`JxlEncoderAddChunkedFrame`，通过 `image_codec_offload_encode_jpegxl_rows()` 接收
+RGB24 行回调；libjxl 可乱序、重复请求不超过 2048×2048 的块，因此回调必须支持随机行读取。
+编码器不构造完整输入帧，但当前 C API 会在内存中保留压缩输出后再写文件；这显著降低
+输入侧峰值，不等价于端到端零缓存。JPEG XL 流式入口同样固定为 CPU/libjxl。
+行回调返回非 `ICO_OK` 会立即中止并保留错误状态；不会被笼统改写成
 `ICO_ERR_ENCODE_FAILED`。
 
 CLI 的 `ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k|out.jpf|out.jpx>`

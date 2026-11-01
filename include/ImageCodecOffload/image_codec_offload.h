@@ -104,7 +104,7 @@ typedef struct ico_image {
   size_t data_size; // 像素数据总字节数
 } ico_image;
 
-// JPEG 2000 行流式编码的调用方回调。destination 始终是恰好
+// 行流式编码的调用方回调。destination 始终是恰好
 // width * channels 字节的 top-down 紧凑行；返回非 ICO_OK 会立即停止编码。
 typedef ico_status (*ico_row_reader)(void *user, int y, uint8_t *destination,
                                      size_t destination_size);
@@ -268,6 +268,12 @@ ICO_API ico_status image_codec_offload_encode_ex(
 ICO_API ico_status image_codec_offload_encode_jpeg2000_rows(
     ico_codec *codec, const char *output_path, int width, int height,
     int channels, int container, ico_row_reader row_reader, void *user);
+
+// JPEG XL RGB24 分块行输入编码。libjxl 可能以任意顺序、多次请求同一行的
+// 子区间，因此 row_reader 必须支持随机读取；该接口使用 CPU/libjxl，不表示 GPU。
+ICO_API ico_status image_codec_offload_encode_jpegxl_rows(
+    ico_codec *codec, const char *output_path, int width, int height,
+    int channels, ico_row_reader row_reader, void *user);
 
 // ---- TIFF 分片（把一帧按 strip 切给多条 lane 并行压缩）----
 //

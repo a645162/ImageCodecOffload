@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <span>
 #include <string>
@@ -23,6 +24,7 @@
 
 #include "image_codec_types.h"
 #include "openjpeg_io.h"
+#include "jpegxl_io.h"
 #include "router.h"
 #include "tiff_container.h"
 #include "tiff_io.h"
@@ -58,86 +60,86 @@ namespace {
 
 ico_status mapStatus(Status status) {
   switch (status) {
-    case Status::Ok:
-      return ICO_OK;
-    case Status::InvalidArgument:
-      return ICO_ERR_INVALID_ARGUMENT;
-    case Status::OutOfMemory:
-      return ICO_ERR_OUT_OF_MEMORY;
-    case Status::BackendUnavailable:
-      return ICO_ERR_BACKEND_UNAVAILABLE;
-    case Status::UnsupportedFormat:
-      return ICO_ERR_UNSUPPORTED_FORMAT;
-    case Status::DecodeFailed:
-      return ICO_ERR_DECODE_FAILED;
-    case Status::EncodeFailed:
-      return ICO_ERR_ENCODE_FAILED;
-    case Status::Io:
-      return ICO_ERR_IO;
-    case Status::Internal:
-      return ICO_ERR_INTERNAL;
+  case Status::Ok:
+    return ICO_OK;
+  case Status::InvalidArgument:
+    return ICO_ERR_INVALID_ARGUMENT;
+  case Status::OutOfMemory:
+    return ICO_ERR_OUT_OF_MEMORY;
+  case Status::BackendUnavailable:
+    return ICO_ERR_BACKEND_UNAVAILABLE;
+  case Status::UnsupportedFormat:
+    return ICO_ERR_UNSUPPORTED_FORMAT;
+  case Status::DecodeFailed:
+    return ICO_ERR_DECODE_FAILED;
+  case Status::EncodeFailed:
+    return ICO_ERR_ENCODE_FAILED;
+  case Status::Io:
+    return ICO_ERR_IO;
+  case Status::Internal:
+    return ICO_ERR_INTERNAL;
   }
   return ICO_ERR_INTERNAL;
 }
 
 Status toStatus(const ico_status status) {
   switch (status) {
-    case ICO_OK:
-      return Status::Ok;
-    case ICO_ERR_INVALID_ARGUMENT:
-      return Status::InvalidArgument;
-    case ICO_ERR_OUT_OF_MEMORY:
-      return Status::OutOfMemory;
-    case ICO_ERR_BACKEND_UNAVAILABLE:
-      return Status::BackendUnavailable;
-    case ICO_ERR_UNSUPPORTED_FORMAT:
-      return Status::UnsupportedFormat;
-    case ICO_ERR_DECODE_FAILED:
-      return Status::DecodeFailed;
-    case ICO_ERR_ENCODE_FAILED:
-      return Status::EncodeFailed;
-    case ICO_ERR_IO:
-      return Status::Io;
-    case ICO_ERR_INTERNAL:
-      return Status::Internal;
+  case ICO_OK:
+    return Status::Ok;
+  case ICO_ERR_INVALID_ARGUMENT:
+    return Status::InvalidArgument;
+  case ICO_ERR_OUT_OF_MEMORY:
+    return Status::OutOfMemory;
+  case ICO_ERR_BACKEND_UNAVAILABLE:
+    return Status::BackendUnavailable;
+  case ICO_ERR_UNSUPPORTED_FORMAT:
+    return Status::UnsupportedFormat;
+  case ICO_ERR_DECODE_FAILED:
+    return Status::DecodeFailed;
+  case ICO_ERR_ENCODE_FAILED:
+    return Status::EncodeFailed;
+  case ICO_ERR_IO:
+    return Status::Io;
+  case ICO_ERR_INTERNAL:
+    return Status::Internal;
   }
   return Status::Internal;
 }
 
 Format toFormat(int format) {
   switch (format) {
-    case ICO_FORMAT_JPEG:
-      return Format::Jpeg;
-    case ICO_FORMAT_TIFF:
-      return Format::Tiff;
-    case ICO_FORMAT_PNG:
-      return Format::Png;
-    case ICO_FORMAT_JPEG2000:
-      return Format::Jpeg2000;
-    case ICO_FORMAT_JPEG_XL:
-      return Format::JpegXl;
-    default:
-      return Format::Unknown;
+  case ICO_FORMAT_JPEG:
+    return Format::Jpeg;
+  case ICO_FORMAT_TIFF:
+    return Format::Tiff;
+  case ICO_FORMAT_PNG:
+    return Format::Png;
+  case ICO_FORMAT_JPEG2000:
+    return Format::Jpeg2000;
+  case ICO_FORMAT_JPEG_XL:
+    return Format::JpegXl;
+  default:
+    return Format::Unknown;
   }
 }
 
 BackendKind toBackendKind(int backend) {
   switch (backend) {
-    case ICO_BACKEND_CPU:
-      return BackendKind::Cpu;
-    case ICO_BACKEND_OPENCL:
-      return BackendKind::OpenCl;
-    case ICO_BACKEND_CUDA:
-      return BackendKind::Cuda;
-    case ICO_BACKEND_VULKAN:
-      return BackendKind::Vulkan;
-    default:
-      return BackendKind::Cpu;
+  case ICO_BACKEND_CPU:
+    return BackendKind::Cpu;
+  case ICO_BACKEND_OPENCL:
+    return BackendKind::OpenCl;
+  case ICO_BACKEND_CUDA:
+    return BackendKind::Cuda;
+  case ICO_BACKEND_VULKAN:
+    return BackendKind::Vulkan;
+  default:
+    return BackendKind::Cpu;
   }
 }
 
-EncodeParams toParams(const ico_encode_params* params) {
-  EncodeParams out;  // 内部默认值
+EncodeParams toParams(const ico_encode_params *params) {
+  EncodeParams out; // 内部默认值
   if (params == nullptr) return out;
 
   if (params->jpeg_quality > 0) out.jpeg_quality = params->jpeg_quality;
@@ -193,7 +195,7 @@ EncodeParams toParams(const ico_encode_params* params) {
 }
 
 // ico_image -> Image。stride 不为紧凑布局时逐行拷贝（不假设调用方给了 padding）。
-bool importImage(const ico_image* src, Image* out) {
+bool importImage(const ico_image *src, Image *out) {
   if (src == nullptr || src->data == nullptr) return false;
   if (src->width == 0 || src->height == 0 || src->channels == 0) return false;
 
@@ -218,20 +220,20 @@ bool importImage(const ico_image* src, Image* out) {
 }
 
 // Image -> ico_image（malloc，由调用方 free）。
-bool exportImage(const Image& src, ico_image* out) {
+bool exportImage(const Image &src, ico_image *out) {
   std::memset(out, 0, sizeof(*out));
   out->width = static_cast<uint32_t>(src.width);
   out->height = static_cast<uint32_t>(src.height);
   out->channels = static_cast<uint32_t>(src.channels);
   out->stride = src.rowBytes();
   out->data_size = src.pixels.size();
-  out->data = static_cast<uint8_t*>(std::malloc(out->data_size));
+  out->data = static_cast<uint8_t *>(std::malloc(out->data_size));
   if (out->data == nullptr) return false;
   std::memcpy(out->data, src.pixels.data(), out->data_size);
   return true;
 }
 
-std::string joinNotes(const Outcome& outcome) {
+std::string joinNotes(const Outcome &outcome) {
   if (outcome.notes.empty()) return std::string();
   std::string joined;
   for (size_t i = 0; i < outcome.notes.size(); ++i) {
@@ -243,55 +245,55 @@ std::string joinNotes(const Outcome& outcome) {
 
 int toIcoExecutionMode(const ExecutionMode mode) {
   switch (mode) {
-    case ExecutionMode::Cpu:
-      return ICO_EXECUTION_CPU;
-    case ExecutionMode::HybridCpuGpu:
-      return ICO_EXECUTION_HYBRID_CPU_GPU;
-    case ExecutionMode::NativeGpu:
-      return ICO_EXECUTION_NATIVE_GPU;
-    case ExecutionMode::Unavailable:
-      return ICO_EXECUTION_UNAVAILABLE;
+  case ExecutionMode::Cpu:
+    return ICO_EXECUTION_CPU;
+  case ExecutionMode::HybridCpuGpu:
+    return ICO_EXECUTION_HYBRID_CPU_GPU;
+  case ExecutionMode::NativeGpu:
+    return ICO_EXECUTION_NATIVE_GPU;
+  case ExecutionMode::Unavailable:
+    return ICO_EXECUTION_UNAVAILABLE;
   }
   return ICO_EXECUTION_UNAVAILABLE;
 }
 
-void record(ico_codec* codec, const Outcome& outcome,
+void record(ico_codec *codec, const Outcome &outcome,
             const Format format = Format::Unknown) {
   codec->last_backend = static_cast<int>(outcome.used);
-  codec->last_execution_mode = toIcoExecutionMode(
-      codec->router.executionMode(outcome.used, format));
+  codec->last_execution_mode =
+      toIcoExecutionMode(codec->router.executionMode(outcome.used, format));
   codec->last_detail = joinNotes(outcome);
 }
 
-}  // namespace
+} // namespace
 
 // ---- 生命周期 ----
 
-const char* image_codec_offload_status_string(ico_status status) {
+const char *image_codec_offload_status_string(ico_status status) {
   switch (status) {
-    case ICO_OK:
-      return "ok";
-    case ICO_ERR_INVALID_ARGUMENT:
-      return "invalid-argument";
-    case ICO_ERR_OUT_OF_MEMORY:
-      return "out-of-memory";
-    case ICO_ERR_BACKEND_UNAVAILABLE:
-      return "backend-unavailable";
-    case ICO_ERR_UNSUPPORTED_FORMAT:
-      return "unsupported-format";
-    case ICO_ERR_DECODE_FAILED:
-      return "decode-failed";
-    case ICO_ERR_ENCODE_FAILED:
-      return "encode-failed";
-    case ICO_ERR_IO:
-      return "io";
-    case ICO_ERR_INTERNAL:
-      return "internal";
+  case ICO_OK:
+    return "ok";
+  case ICO_ERR_INVALID_ARGUMENT:
+    return "invalid-argument";
+  case ICO_ERR_OUT_OF_MEMORY:
+    return "out-of-memory";
+  case ICO_ERR_BACKEND_UNAVAILABLE:
+    return "backend-unavailable";
+  case ICO_ERR_UNSUPPORTED_FORMAT:
+    return "unsupported-format";
+  case ICO_ERR_DECODE_FAILED:
+    return "decode-failed";
+  case ICO_ERR_ENCODE_FAILED:
+    return "encode-failed";
+  case ICO_ERR_IO:
+    return "io";
+  case ICO_ERR_INTERNAL:
+    return "internal";
   }
   return "unknown";
 }
 
-ico_status image_codec_offload_create(ico_codec** out_codec,
+ico_status image_codec_offload_create(ico_codec **out_codec,
                                       int preferred_backend) {
   if (out_codec == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   *out_codec = nullptr;
@@ -312,7 +314,7 @@ ico_status image_codec_offload_create(ico_codec** out_codec,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_create_forced(ico_codec** out_codec,
+ico_status image_codec_offload_create_forced(ico_codec **out_codec,
                                              int backend) {
   if (out_codec == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   *out_codec = nullptr;
@@ -325,9 +327,9 @@ ico_status image_codec_offload_create_forced(ico_codec** out_codec,
   return ICO_OK;
 }
 
-void image_codec_offload_destroy(ico_codec* codec) { delete codec; }
+void image_codec_offload_destroy(ico_codec *codec) { delete codec; }
 
-ico_status image_codec_offload_set_order(ico_codec* codec, const int* kinds,
+ico_status image_codec_offload_set_order(ico_codec *codec, const int *kinds,
                                          int count) {
   if (codec == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   if (count < 0 || (count > 0 && kinds == nullptr)) {
@@ -345,9 +347,9 @@ ico_status image_codec_offload_set_order(ico_codec* codec, const int* kinds,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_probe_backends(ico_codec* codec,
-                                              ico_backend_info* out,
-                                              int capacity, int* count) {
+ico_status image_codec_offload_probe_backends(ico_codec *codec,
+                                              ico_backend_info *out,
+                                              int capacity, int *count) {
   if (codec == nullptr || count == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   if (capacity < 0 || (capacity > 0 && out == nullptr)) {
     return ICO_ERR_INVALID_ARGUMENT;
@@ -369,8 +371,8 @@ ico_status image_codec_offload_probe_backends(ico_codec* codec,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_last_outcome(ico_codec* codec, int* used_backend,
-                                            char* detail,
+ico_status image_codec_offload_last_outcome(ico_codec *codec, int *used_backend,
+                                            char *detail,
                                             size_t detail_capacity) {
   if (codec == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   if (used_backend != nullptr) *used_backend = codec->last_backend;
@@ -381,20 +383,21 @@ ico_status image_codec_offload_last_outcome(ico_codec* codec, int* used_backend,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_last_execution_mode(ico_codec* codec, int* mode) {
+ico_status image_codec_offload_last_execution_mode(ico_codec *codec,
+                                                   int *mode) {
   if (codec == nullptr || mode == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   *mode = codec->last_execution_mode;
   return ICO_OK;
 }
 
 ico_status
-image_codec_offload_encode_capabilities(ico_codec* codec,
-                                        ico_encode_capabilities* out) {
+image_codec_offload_encode_capabilities(ico_codec *codec,
+                                        ico_encode_capabilities *out) {
   if (codec == nullptr || out == nullptr) return ICO_ERR_INVALID_ARGUMENT;
 
-  const auto caps = codec->forced
-                        ? codec->router.encodeCapabilitiesFor(codec->forced_kind)
-                        : codec->router.encodeCapabilities();
+  const auto caps =
+      codec->forced ? codec->router.encodeCapabilitiesFor(codec->forced_kind)
+                    : codec->router.encodeCapabilities();
   out->jpeg_progressive = caps.jpeg_progressive ? 1 : 0;
   out->jpeg_optimize_huffman = caps.jpeg_optimize_huffman ? 1 : 0;
   out->jpeg_restart_interval = caps.jpeg_restart_interval ? 1 : 0;
@@ -410,37 +413,37 @@ image_codec_offload_encode_capabilities(ico_codec* codec,
 
 // ---- 编解码 ----
 
-ico_status image_codec_offload_probe(const void* data, size_t size,
-                                     int* out_format) {
+ico_status image_codec_offload_probe(const void *data, size_t size,
+                                     int *out_format) {
   if (out_format == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   const Format format = image_codec::offload::probeFormat(
-      static_cast<const uint8_t*>(data), size);
+      static_cast<const uint8_t *>(data), size);
   switch (format) {
-    case Format::Jpeg:
-      *out_format = ICO_FORMAT_JPEG;
-      break;
-    case Format::Tiff:
-      *out_format = ICO_FORMAT_TIFF;
-      break;
-    case Format::Png:
-      *out_format = ICO_FORMAT_PNG;
-      break;
-    case Format::Jpeg2000:
-      *out_format = ICO_FORMAT_JPEG2000;
-      break;
-    case Format::JpegXl:
-      *out_format = ICO_FORMAT_JPEG_XL;
-      break;
-    default:
-      *out_format = ICO_FORMAT_UNKNOWN;
-      break;
+  case Format::Jpeg:
+    *out_format = ICO_FORMAT_JPEG;
+    break;
+  case Format::Tiff:
+    *out_format = ICO_FORMAT_TIFF;
+    break;
+  case Format::Png:
+    *out_format = ICO_FORMAT_PNG;
+    break;
+  case Format::Jpeg2000:
+    *out_format = ICO_FORMAT_JPEG2000;
+    break;
+  case Format::JpegXl:
+    *out_format = ICO_FORMAT_JPEG_XL;
+    break;
+  default:
+    *out_format = ICO_FORMAT_UNKNOWN;
+    break;
   }
   return ICO_OK;
 }
 
-ico_status image_codec_offload_decode(ico_codec* codec, int format,
-                                      const void* in, size_t in_len,
-                                      ico_image* out) {
+ico_status image_codec_offload_decode(ico_codec *codec, int format,
+                                      const void *in, size_t in_len,
+                                      ico_image *out) {
   if (codec == nullptr || in == nullptr || in_len == 0 || out == nullptr) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
@@ -449,8 +452,8 @@ ico_status image_codec_offload_decode(ico_codec* codec, int format,
   Format fmt = toFormat(format);
   if (fmt == Format::Unknown) {
     // 调用方说「不知道」时自己看魔数，而不是要求它先调 probe。
-    fmt = image_codec::offload::probeFormat(
-        static_cast<const uint8_t*>(in), in_len);
+    fmt = image_codec::offload::probeFormat(static_cast<const uint8_t *>(in),
+                                            in_len);
   }
   if (fmt == Format::Unknown) {
     return ICO_ERR_UNSUPPORTED_FORMAT;
@@ -460,8 +463,8 @@ ico_status image_codec_offload_decode(ico_codec* codec, int format,
   const auto decoded =
       codec->forced
           ? codec->router.decodeWith(codec->forced_kind, fmt,
-                                     static_cast<const uint8_t*>(in), in_len)
-          : codec->router.decode(fmt, static_cast<const uint8_t*>(in), in_len,
+                                     static_cast<const uint8_t *>(in), in_len)
+          : codec->router.decode(fmt, static_cast<const uint8_t *>(in), in_len,
                                  &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome, fmt);
@@ -473,10 +476,12 @@ ico_status image_codec_offload_decode(ico_codec* codec, int format,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_encode_ex(
-    ico_codec* codec, int format, const ico_image* img,
-    const ico_encode_params* params, const int jpeg2000_container, void* out,
-    size_t* out_len, size_t out_capacity) {
+ico_status image_codec_offload_encode_ex(ico_codec *codec, int format,
+                                         const ico_image *img,
+                                         const ico_encode_params *params,
+                                         const int jpeg2000_container,
+                                         void *out, size_t *out_len,
+                                         size_t out_capacity) {
   if (codec == nullptr || img == nullptr || out_len == nullptr) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
@@ -499,11 +504,10 @@ ico_status image_codec_offload_encode_ex(
             ? Jpeg2000Container::J2k
             : Jpeg2000Container::Jp2;
   }
-  const auto encoded = codec->forced
-                           ? codec->router.encodeWith(codec->forced_kind, fmt,
-                                                      image, encodeParams)
-                           : codec->router.encode(fmt, image,
-                                                  encodeParams, &outcome);
+  const auto encoded =
+      codec->forced ? codec->router.encodeWith(codec->forced_kind, fmt, image,
+                                               encodeParams)
+                    : codec->router.encode(fmt, image, encodeParams, &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome, fmt);
   if (!encoded) return mapStatus(encoded.error().code);
@@ -519,14 +523,14 @@ ico_status image_codec_offload_encode_ex(
   return ICO_OK;
 }
 
-ico_status image_codec_offload_encode(ico_codec* codec, int format,
-                                      const ico_image* img,
-                                      const ico_encode_params* params,
-                                      void* out, size_t* out_len,
+ico_status image_codec_offload_encode(ico_codec *codec, int format,
+                                      const ico_image *img,
+                                      const ico_encode_params *params,
+                                      void *out, size_t *out_len,
                                       size_t out_capacity) {
-  return image_codec_offload_encode_ex(
-      codec, format, img, params, ICO_JPEG2000_CONTAINER_JP2, out, out_len,
-      out_capacity);
+  return image_codec_offload_encode_ex(codec, format, img, params,
+                                       ICO_JPEG2000_CONTAINER_JP2, out, out_len,
+                                       out_capacity);
 }
 
 ico_status image_codec_offload_encode_jpeg2000_rows(
@@ -539,20 +543,19 @@ ico_status image_codec_offload_encode_jpeg2000_rows(
   }
   Jpeg2000Container jpeg2000Container;
   switch (container) {
-    case ICO_JPEG2000_CONTAINER_JP2:
-      jpeg2000Container = Jpeg2000Container::Jp2;
-      break;
-    case ICO_JPEG2000_CONTAINER_J2K:
-      jpeg2000Container = Jpeg2000Container::J2k;
-      break;
-    default:
-      return ICO_ERR_INVALID_ARGUMENT;
+  case ICO_JPEG2000_CONTAINER_JP2:
+    jpeg2000Container = Jpeg2000Container::Jp2;
+    break;
+  case ICO_JPEG2000_CONTAINER_J2K:
+    jpeg2000Container = Jpeg2000Container::J2k;
+    break;
+  default:
+    return ICO_ERR_INVALID_ARGUMENT;
   }
   const auto outputPath = std::filesystem::path(
       std::u8string(reinterpret_cast<const char8_t *>(output_path)));
   const auto result = image_codec::offload::cpu::encodeJpeg2000Rows(
-      outputPath, width, height, channels,
-      jpeg2000Container,
+      outputPath, width, height, channels, jpeg2000Container,
       [row_reader, user](const int y, std::span<uint8_t> destination)
           -> image_codec::offload::Result<void> {
         const auto status =
@@ -563,8 +566,7 @@ ico_status image_codec_offload_encode_jpeg2000_rows(
       });
   codec->last_backend = ICO_BACKEND_CPU;
   codec->last_execution_mode = ICO_EXECUTION_CPU;
-  codec->last_detail =
-      "cpu: OpenJPEG tile streaming (GPU staging is not used)";
+  codec->last_detail = "cpu: OpenJPEG tile streaming (GPU staging is not used)";
   if (!result) {
     codec->last_detail += ": " + result.error().message;
     return mapStatus(result.error().code);
@@ -572,9 +574,53 @@ ico_status image_codec_offload_encode_jpeg2000_rows(
   return ICO_OK;
 }
 
+ico_status image_codec_offload_encode_jpegxl_rows(
+    ico_codec *codec, const char *output_path, const int width,
+    const int height, const int channels, const ico_row_reader row_reader,
+    void *user) {
+  if (codec == nullptr || output_path == nullptr || *output_path == '\0' ||
+      row_reader == nullptr) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
+  const auto result = image_codec::offload::cpu::encodeJpegXlRows(
+      width, height, channels,
+      [row_reader, user](const int y, std::span<uint8_t> destination)
+          -> image_codec::offload::Result<void> {
+        const auto status =
+            row_reader(user, y, destination.data(), destination.size());
+        if (status == ICO_OK) return {};
+        return image_codec::offload::fail<void>(
+            toStatus(status), "jpeg-xl streaming row reader failed");
+      });
+  codec->last_backend = ICO_BACKEND_CPU;
+  codec->last_execution_mode = ICO_EXECUTION_CPU;
+  codec->last_detail = "cpu: libjxl chunked RGB24 input";
+  if (!result) {
+    codec->last_detail += ": " + result.error().message;
+    return mapStatus(result.error().code);
+  }
+  const std::filesystem::path outputPath = std::filesystem::path(
+      std::u8string(reinterpret_cast<const char8_t *>(output_path)));
+  std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    codec->last_detail += ": output open failed";
+    return ICO_ERR_IO;
+  }
+  output.write(reinterpret_cast<const char *>(result->data()),
+               static_cast<std::streamsize>(result->size()));
+  output.close();
+  if (!output) {
+    std::error_code ignored;
+    std::filesystem::remove(outputPath, ignored);
+    codec->last_detail += ": output write failed";
+    return ICO_ERR_IO;
+  }
+  return ICO_OK;
+}
+
 ico_status image_codec_offload_tiff_strip_encode(
-    ico_codec* codec, const ico_image* img, int first_row, int rows,
-    const ico_encode_params* params, void* out, size_t* out_len,
+    ico_codec *codec, const ico_image *img, int first_row, int rows,
+    const ico_encode_params *params, void *out, size_t *out_len,
     size_t out_capacity) {
   if (codec == nullptr || img == nullptr || out_len == nullptr) {
     return ICO_ERR_INVALID_ARGUMENT;
@@ -587,8 +633,7 @@ ico_status image_codec_offload_tiff_strip_encode(
   const auto encoded =
       codec->forced
           ? codec->router.encodeTiffStripWith(codec->forced_kind, image,
-                                              first_row, rows,
-                                              toParams(params))
+                                              first_row, rows, toParams(params))
           : codec->router.encodeTiffStrip(image, first_row, rows,
                                           toParams(params), &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
@@ -604,10 +649,12 @@ ico_status image_codec_offload_tiff_strip_encode(
   return ICO_OK;
 }
 
-ico_status image_codec_offload_tiff_assemble(
-    const ico_tiff_assembly* assembly, const void* const* strips,
-    const size_t* strip_sizes, int strip_count, void* out, size_t* out_len,
-    size_t out_capacity) {
+ico_status image_codec_offload_tiff_assemble(const ico_tiff_assembly *assembly,
+                                             const void *const *strips,
+                                             const size_t *strip_sizes,
+                                             int strip_count, void *out,
+                                             size_t *out_len,
+                                             size_t out_capacity) {
   if (assembly == nullptr || out_len == nullptr || strip_count <= 0 ||
       strips == nullptr || strip_sizes == nullptr) {
     return ICO_ERR_INVALID_ARGUMENT;
@@ -621,7 +668,7 @@ ico_status image_codec_offload_tiff_assemble(
     if (strips[index] == nullptr || strip_sizes[index] == 0) {
       return ICO_ERR_INVALID_ARGUMENT;
     }
-    const auto* begin = static_cast<const uint8_t*>(strips[index]);
+    const auto *begin = static_cast<const uint8_t *>(strips[index]);
     payloads.emplace_back(begin, begin + strip_sizes[index]);
   }
 
@@ -649,7 +696,7 @@ ico_status image_codec_offload_tiff_assemble(
   return ICO_OK;
 }
 
-void image_codec_offload_image_free(ico_image* img) {
+void image_codec_offload_image_free(ico_image *img) {
   if (img == nullptr) return;
   if (img->data != nullptr) std::free(img->data);
   std::memset(img, 0, sizeof(*img));
@@ -657,9 +704,9 @@ void image_codec_offload_image_free(ico_image* img) {
 
 // ---- 指标 ----
 
-ico_status image_codec_offload_metric_mse(ico_codec* codec, const ico_image* a,
-                                          const ico_image* b,
-                                          double* out_value) {
+ico_status image_codec_offload_metric_mse(ico_codec *codec, const ico_image *a,
+                                          const ico_image *b,
+                                          double *out_value) {
   if (codec == nullptr || out_value == nullptr) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
@@ -671,10 +718,9 @@ ico_status image_codec_offload_metric_mse(ico_codec* codec, const ico_image* a,
   }
 
   Outcome outcome;
-  const auto value =
-      codec->forced
-          ? codec->router.mseWith(codec->forced_kind, ia, ib)
-          : codec->router.mse(ia, ib, &outcome);
+  const auto value = codec->forced
+                         ? codec->router.mseWith(codec->forced_kind, ia, ib)
+                         : codec->router.mse(ia, ib, &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!value) return mapStatus(value.error().code);
@@ -683,9 +729,9 @@ ico_status image_codec_offload_metric_mse(ico_codec* codec, const ico_image* a,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_metric_psnr(ico_codec* codec, const ico_image* a,
-                                           const ico_image* b,
-                                           double* out_value) {
+ico_status image_codec_offload_metric_psnr(ico_codec *codec, const ico_image *a,
+                                           const ico_image *b,
+                                           double *out_value) {
   if (codec == nullptr || out_value == nullptr) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
@@ -697,10 +743,9 @@ ico_status image_codec_offload_metric_psnr(ico_codec* codec, const ico_image* a,
   }
 
   Outcome outcome;
-  const auto value =
-      codec->forced
-          ? codec->router.psnrWith(codec->forced_kind, ia, ib)
-          : codec->router.psnr(ia, ib, &outcome);
+  const auto value = codec->forced
+                         ? codec->router.psnrWith(codec->forced_kind, ia, ib)
+                         : codec->router.psnr(ia, ib, &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!value) return mapStatus(value.error().code);
@@ -709,8 +754,8 @@ ico_status image_codec_offload_metric_psnr(ico_codec* codec, const ico_image* a,
   return ICO_OK;
 }
 
-ico_status image_codec_offload_metric_ssim(ico_codec* codec, const ico_image* a,
-                                           const ico_image* b, ico_ssim* out) {
+ico_status image_codec_offload_metric_ssim(ico_codec *codec, const ico_image *a,
+                                           const ico_image *b, ico_ssim *out) {
   if (codec == nullptr || out == nullptr) return ICO_ERR_INVALID_ARGUMENT;
   std::memset(out, 0, sizeof(*out));
 
@@ -721,10 +766,9 @@ ico_status image_codec_offload_metric_ssim(ico_codec* codec, const ico_image* a,
   }
 
   Outcome outcome;
-  const auto value =
-      codec->forced
-          ? codec->router.ssimWith(codec->forced_kind, ia, ib)
-          : codec->router.ssim(ia, ib, &outcome);
+  const auto value = codec->forced
+                         ? codec->router.ssimWith(codec->forced_kind, ia, ib)
+                         : codec->router.ssim(ia, ib, &outcome);
   if (codec->forced) outcome.used = codec->forced_kind;
   record(codec, outcome);
   if (!value) return mapStatus(value.error().code);
