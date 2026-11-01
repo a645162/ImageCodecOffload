@@ -15,11 +15,14 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "image_codec_types.h"
+#include "openjpeg_io.h"
 #include "router.h"
 #include "tiff_container.h"
 #include "tiff_io.h"
@@ -30,6 +33,7 @@ using image_codec::offload::Error;
 using image_codec::offload::ExecutionMode;
 using image_codec::offload::Format;
 using image_codec::offload::Image;
+using image_codec::offload::Jpeg2000Container;
 using image_codec::offload::Outcome;
 using image_codec::offload::Router;
 using image_codec::offload::SsimResult;
@@ -74,6 +78,30 @@ ico_status mapStatus(Status status) {
       return ICO_ERR_INTERNAL;
   }
   return ICO_ERR_INTERNAL;
+}
+
+Status toStatus(const ico_status status) {
+  switch (status) {
+    case ICO_OK:
+      return Status::Ok;
+    case ICO_ERR_INVALID_ARGUMENT:
+      return Status::InvalidArgument;
+    case ICO_ERR_OUT_OF_MEMORY:
+      return Status::OutOfMemory;
+    case ICO_ERR_BACKEND_UNAVAILABLE:
+      return Status::BackendUnavailable;
+    case ICO_ERR_UNSUPPORTED_FORMAT:
+      return Status::UnsupportedFormat;
+    case ICO_ERR_DECODE_FAILED:
+      return Status::DecodeFailed;
+    case ICO_ERR_ENCODE_FAILED:
+      return Status::EncodeFailed;
+    case ICO_ERR_IO:
+      return Status::Io;
+    case ICO_ERR_INTERNAL:
+      return Status::Internal;
+  }
+  return Status::Internal;
 }
 
 Format toFormat(int format) {
@@ -478,6 +506,49 @@ ico_status image_codec_offload_encode(ico_codec* codec, int format,
 
   std::memcpy(out, encoded->data(), encoded->size());
   *out_len = encoded->size();
+  return ICO_OK;
+}
+
+ico_status image_codec_offload_encode_jpeg2000_rows(
+    ico_codec *codec, const char *output_path, const int width,
+    const int height, const int channels, const int container,
+    const ico_row_reader row_reader, void *user) {
+  if (codec == nullptr || output_path == nullptr || *output_path == '\0' ||
+      row_reader == nullptr) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
+  Jpeg2000Container jpeg2000Container;
+  switch (container) {
+    case ICO_JPEG2000_CONTAINER_JP2:
+      jpeg2000Container = Jpeg2000Container::Jp2;
+      break;
+    case ICO_JPEG2000_CONTAINER_J2K:
+      jpeg2000Container = Jpeg2000Container::J2k;
+      break;
+    default:
+      return ICO_ERR_INVALID_ARGUMENT;
+  }
+  const auto outputPath = std::filesystem::path(
+      std::u8string(reinterpret_cast<const char8_t *>(output_path)));
+  const auto result = image_codec::offload::cpu::encodeJpeg2000Rows(
+      outputPath, width, height, channels,
+      jpeg2000Container,
+      [row_reader, user](const int y, std::span<uint8_t> destination)
+          -> image_codec::offload::Result<void> {
+        const auto status =
+            row_reader(user, y, destination.data(), destination.size());
+        if (status == ICO_OK) return {};
+        return image_codec::offload::fail<void>(
+            toStatus(status), "jpeg2000 streaming row reader failed");
+      });
+  codec->last_backend = ICO_BACKEND_CPU;
+  codec->last_execution_mode = ICO_EXECUTION_CPU;
+  codec->last_detail =
+      "cpu: OpenJPEG tile streaming (GPU staging is not used)";
+  if (!result) {
+    codec->last_detail += ": " + result.error().message;
+    return mapStatus(result.error().code);
+  }
   return ICO_OK;
 }
 

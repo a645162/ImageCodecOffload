@@ -82,6 +82,13 @@ typedef enum ico_execution_mode {
   ICO_EXECUTION_NATIVE_GPU = 3
 } ico_execution_mode;
 
+// JPEG 2000 输出容器。JP2/JPF/JPX 使用 ICO_JPEG2000_CONTAINER_JP2；
+// 只有 .j2k 使用裸码流。
+typedef enum ico_jpeg2000_container {
+  ICO_JPEG2000_CONTAINER_JP2 = 0,
+  ICO_JPEG2000_CONTAINER_J2K = 1
+} ico_jpeg2000_container;
+
 // 解码产物 / 编码输入。
 //   channels：1 = 灰度、2 = 灰度+Alpha、3 = RGB、4 = RGBA（Alpha 非预乘）。
 //   与 PNG 的四种颜色类型一一对应；PNG / TIFF 全支持，JPEG 没有 Alpha 样本，
@@ -96,6 +103,11 @@ typedef struct ico_image {
   size_t stride;    // 每行字节数
   size_t data_size; // 像素数据总字节数
 } ico_image;
+
+// JPEG 2000 行流式编码的调用方回调。destination 始终是恰好
+// width * channels 字节的 top-down 紧凑行；返回非 ICO_OK 会立即停止编码。
+typedef ico_status (*ico_row_reader)(void *user, int y, uint8_t *destination,
+                                     size_t destination_size);
 
 // 编码参数。字段按目标格式选用，未用到的字段忽略（保持 0 即用默认值）。
 //
@@ -241,6 +253,13 @@ ICO_API ico_status image_codec_offload_encode(ico_codec *codec, int format,
                                               const ico_encode_params *params,
                                               void *out, size_t *out_len,
                                               size_t out_capacity);
+
+// 真正有界内存的 JPEG 2000 行流式编码。该入口当前只使用 OpenJPEG CPU tile
+// writer，不会把所有行聚合为 ico_image，也不会声明 GPU 参与。output_path 是
+// UTF-8 文件路径；调用方负责先写临时路径、成功后再原子替换最终输出。
+ICO_API ico_status image_codec_offload_encode_jpeg2000_rows(
+    ico_codec *codec, const char *output_path, int width, int height,
+    int channels, int container, ico_row_reader row_reader, void *user);
 
 // ---- TIFF 分片（把一帧按 strip 切给多条 lane 并行压缩）----
 //

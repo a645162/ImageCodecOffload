@@ -177,6 +177,18 @@ CPU 没有可移植、可靠的“当前可安全分配内存”计数器，因�
 说明，而不是把 `SIZE_MAX` 冒充为机器实际可承载分辨率。未编译、无设备或不支持格式时
 返回结构化错误；调用方应显示原因，不能把它渲染为“无限制”。
 
+## JPEG 2000 行流式编码
+
+`image_codec_offload_encode_jpeg2000_rows()` 是 JPEG 2000 的有界内存输出入口。
+它通过 OpenJPEG 的 `opj_image_tile_create` 和 `opj_write_tile` 写入完整宽度、至多
+256 行的顺序 tile：调用方的每个 top-down 行只读取一次，库不会把全部行拼成
+`ico_image`。该入口支持 8-bit Gray/RGB 和 JP2/J2K 容器，输出路径应由调用方先指向
+临时文件，再在成功后执行自己的原子替换。
+
+这个入口**固定是 CPU/OpenJPEG**，`last_execution_mode` 会报告 `CPU`，不会初始化或
+冒充 OpenCL/CUDA/Vulkan staging。JPEG XL 目前没有等价的行输入契约，仍明确拒绝
+流式输出；不得为了“支持流式”而在调用方或库内暗中聚合整幅图。
+
 ## 构建
 
 依赖 libtiff / libpng / libjpeg-turbo（CPU 基线），OpenCL 与 CUDA 按需打开。

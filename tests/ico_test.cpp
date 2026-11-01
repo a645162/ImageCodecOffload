@@ -47,6 +47,26 @@ namespace {
 
 int g_failures = 0;
 
+struct StreamingRowReaderState {
+  const Image *image = nullptr;
+  int rowsRead = 0;
+};
+
+ico_status readStreamingRow(void *user, const int y, uint8_t *destination,
+                            const size_t destinationSize) {
+  auto *state = static_cast<StreamingRowReaderState *>(user);
+  if (state == nullptr || state->image == nullptr || destination == nullptr ||
+      y < 0 || y >= state->image->height ||
+      destinationSize != state->image->rowBytes()) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
+  std::copy_n(state->image->pixels.data() +
+                  static_cast<size_t>(y) * state->image->rowBytes(),
+              state->image->rowBytes(), destination);
+  ++state->rowsRead;
+  return ICO_OK;
+}
+
 void check(bool ok, const char *what) {
   if (!ok) {
     std::fprintf(stderr, "FAIL: %s\n", what);
@@ -275,6 +295,57 @@ void testJpeg2000RowStreaming() {
     check(decoded->width == kWidth && decoded->height == kHeight &&
               decoded->channels == kChannels,
           "jpeg2000 streaming preserves geometry and channels");
+  }
+}
+
+void testJpeg2000RowStreamingCapi() {
+  constexpr int kWidth = 37;
+  constexpr int kHeight = 263;  // Crosses the tile boundary.
+  constexpr int kChannels = 3;
+  const Image source = makeImage(kWidth, kHeight, kChannels);
+  const auto path = std::filesystem::temp_directory_path() /
+                    "imagecodec-jpeg2000-row-streaming.j2k";
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
+  ico_codec *codec = nullptr;
+  check(image_codec_offload_create_forced(&codec, ICO_BACKEND_CPU) == ICO_OK &&
+            codec != nullptr,
+        "create forced CPU codec for jpeg2000 streaming");
+  if (codec == nullptr) return;
+  StreamingRowReaderState state{.image = &source};
+  const auto status = image_codec_offload_encode_jpeg2000_rows(
+      codec, path.string().c_str(), kWidth, kHeight, kChannels,
+      ICO_JPEG2000_CONTAINER_J2K, readStreamingRow, &state);
+  if (status != ICO_OK) {
+    check(status == ICO_ERR_BACKEND_UNAVAILABLE,
+          "jpeg2000 streaming C API is available when OpenJPEG is built");
+    image_codec_offload_destroy(codec);
+    std::filesystem::remove(path, ignored);
+    return;
+  }
+  check(state.rowsRead == kHeight,
+        "jpeg2000 streaming C API reads each row exactly once");
+  int mode = ICO_EXECUTION_UNAVAILABLE;
+  check(image_codec_offload_last_execution_mode(codec, &mode) == ICO_OK &&
+            mode == ICO_EXECUTION_CPU,
+        "jpeg2000 streaming C API truthfully reports CPU mode");
+  image_codec_offload_destroy(codec);
+
+  std::ifstream input(path, std::ios::binary);
+  const std::vector<uint8_t> encoded((std::istreambuf_iterator<char>(input)),
+                                     std::istreambuf_iterator<char>());
+  std::filesystem::remove(path, ignored);
+  check(encoded.size() >= 4 && encoded[0] == 0xFF && encoded[1] == 0x4F &&
+            encoded[2] == 0xFF && encoded[3] == 0x51,
+        "jpeg2000 streaming C API writes the J2K codestream");
+  Router router;
+  const auto decoded = router.decodeWith(BackendKind::Cpu, Format::Jpeg2000,
+                                         encoded.data(), encoded.size());
+  check(static_cast<bool>(decoded), "jpeg2000 streaming C API output decodes");
+  if (decoded) {
+    check(decoded->width == kWidth && decoded->height == kHeight &&
+              decoded->channels == kChannels,
+          "jpeg2000 streaming C API preserves geometry and channels");
   }
 }
 
@@ -1983,6 +2054,7 @@ int main() {
   testRuntimeResolutionLimitContract();
   testJpeg2000CpuRoundtrip();
   testJpeg2000RowStreaming();
+  testJpeg2000RowStreamingCapi();
   testJpegXlCpuRoundtrip();
   testGpuHybridNewFormatRoundtrip();
   testBmpRoundtrip();
