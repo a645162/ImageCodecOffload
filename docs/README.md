@@ -200,6 +200,12 @@ CLI 的 `ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k|out.jpf|out.jpx>`
 输入会验证灰度调色板并保持单通道，24-bit 输入按行 seek/read 后执行 BGR→RGB 转换。
 带 alpha、非灰度调色板或压缩 BMP 会明确拒绝，绝不回退为整图读入。
 
+`ico encode-stream-jxl <in.bmp> <out.jxl>` 使用相同的 BMP 随机行读取器，
+但当前只接受 24-bit RGB BMP，因为 JXL chunked C API 目前定义为 RGB24；8-bit
+灰度、带 alpha、非灰度调色板或压缩 BMP 会明确拒绝。JXL 的分块读取可重复请求
+行，输入读取次数不保证每行一次；CPU/libjxl 会避免建立整幅 RGB 输入缓冲，压缩
+码流仍暂存于内存后写盘。该命令不会调用 GPU staging。
+
 ## 构建
 
 依赖 libtiff / libpng / libjpeg-turbo（CPU 基线），OpenCL 与 CUDA 按需打开。

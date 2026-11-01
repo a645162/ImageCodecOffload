@@ -57,6 +57,7 @@ void printUsage() {
       "                        [--png-level N] [--png-filter N]\n"
       "                        [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k|out.jpf|out.jpx>\n"
+      "  ico encode-stream-jxl <in.bmp> <out.jxl> (RGB24, CPU/libjxl)\n"
       "  ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico matrix <input.bmp> <output-dir>\n"
@@ -205,6 +206,52 @@ int cmdEncodeStreamJpeg2000(const std::string &input, const std::string &output)
   const auto milliseconds = static_cast<double>(nowMicros() - start) / 1000.0;
   std::printf("%dx%d x%d BMP -> JPEG 2000 CPU tile stream in %.1f ms\n",
               source.width, source.height, source.channels, milliseconds);
+  return 0;
+}
+
+int cmdEncodeStreamJpegXl(const std::string &input,
+                          const std::string &output) {
+  const auto dot = output.find_last_of('.');
+  std::string extension = dot == std::string::npos ? std::string()
+                                                    : output.substr(dot);
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  if (extension != ".jxl") {
+    std::fprintf(stderr, "error: streaming JPEG XL output must use .jxl\n");
+    return 1;
+  }
+  Bmp24RowSource source;
+  std::string error;
+  if (!Bmp24RowSource::open(input, &source, &error)) {
+    std::fprintf(stderr, "error: %s\n", error.c_str());
+    return 1;
+  }
+  if (source.channels != 3) {
+    std::fprintf(stderr,
+                 "error: JPEG XL streaming currently requires 24-bit RGB BMP\n");
+    return 1;
+  }
+  ico_codec *codec = nullptr;
+  if (image_codec_offload_create_forced(&codec, ICO_BACKEND_CPU) != ICO_OK ||
+      codec == nullptr) {
+    std::fprintf(stderr, "error: cannot create CPU streaming codec\n");
+    return 1;
+  }
+  const auto start = nowMicros();
+  const auto status = image_codec_offload_encode_jpegxl_rows(
+      codec, output.c_str(), source.width, source.height, source.channels,
+      readBmp24StreamingRow, &source);
+  image_codec_offload_destroy(codec);
+  if (status != ICO_OK) {
+    std::fprintf(stderr, "streaming encode failed: %s\n",
+                 image_codec_offload_status_string(status));
+    return 1;
+  }
+  const auto milliseconds = static_cast<double>(nowMicros() - start) / 1000.0;
+  std::printf("%dx%d RGB BMP -> JPEG XL CPU chunked input in %.1f ms\n",
+              source.width, source.height, milliseconds);
   return 0;
 }
 
@@ -788,6 +835,14 @@ int main(int argc, char **argv) {
       return 1;
     }
     return cmdEncodeStreamJpeg2000(positional[0], positional[1]);
+  }
+
+  if (command == "encode-stream-jxl") {
+    if (positional.size() != 2 || force) {
+      printUsage();
+      return 1;
+    }
+    return cmdEncodeStreamJpegXl(positional[0], positional[1]);
   }
 
   if (command == "decode") {
