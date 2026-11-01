@@ -160,6 +160,24 @@ void testJpeg2000CpuRoundtrip() {
     check(decoded->channels == source.channels, "jpeg2000 channels");
   }
 
+  // .jp2/.jpf/.jpx 都使用 JP2 家族容器。矩阵将以三个文件后缀分别落盘，
+  // 这里锁住它们的共同码流语义，避免后续只测了扩展名却改坏实际容器。
+  for (const char *label : {"jp2", "jpf", "jpx"}) {
+    const auto jp2_family = router.encodeWith(BackendKind::Cpu,
+                                              Format::Jpeg2000, source,
+                                              EncodeParams{});
+    check(static_cast<bool>(jp2_family), "jp2-family cpu encode");
+    if (!jp2_family) continue;
+    check(jp2_family->size() >= 12 && (*jp2_family)[4] == 'j' &&
+              (*jp2_family)[5] == 'P' && (*jp2_family)[6] == ' ' &&
+              (*jp2_family)[7] == ' ',
+          label);
+    const auto decoded_family =
+        router.decodeWith(BackendKind::Cpu, Format::Jpeg2000,
+                          jp2_family->data(), jp2_family->size());
+    check(static_cast<bool>(decoded_family), "jp2-family cpu decode");
+  }
+
   EncodeParams j2k_params;
   j2k_params.jpeg2000_container = Jpeg2000Container::J2k;
   auto j2k = router.encodeWith(BackendKind::Cpu, Format::Jpeg2000, source,

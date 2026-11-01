@@ -67,24 +67,6 @@ bool loadImage(Router &router, const std::string &path, Image *out,
                std::string *err);
 long long nowMicros();
 
-const char *formatSuffix(const Format format) {
-  switch (format) {
-  case Format::Jpeg:
-    return "jpg";
-  case Format::Tiff:
-    return "tiff";
-  case Format::Png:
-    return "png";
-  case Format::Jpeg2000:
-    return "jp2";
-  case Format::JpegXl:
-    return "jxl";
-  case Format::Unknown:
-    return "bin";
-  }
-  return "bin";
-}
-
 int cmdMatrix(const std::string &input, const std::string &output_dir) {
   Router router;
   std::string error;
@@ -112,20 +94,40 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
   const std::vector<BackendKind> backends = {
       BackendKind::Cpu, BackendKind::OpenCl, BackendKind::Cuda,
       BackendKind::Vulkan};
-  const std::vector<Format> formats = {
-      Format::Jpeg, Format::Tiff, Format::Png, Format::Jpeg2000,
-      Format::JpegXl};
+  struct MatrixFormat final {
+    Format format;
+    const char *name;
+    const char *suffix;
+    image_codec::offload::Jpeg2000Container jpeg2000Container =
+        image_codec::offload::Jpeg2000Container::Jp2;
+  };
+  // JPEG 2000 的四种用户可选后缀不能在矩阵中折叠成一个抽象 Format：.j2k
+  // 是裸 codestream，而 .jp2/.jpf/.jpx 都必须实际产出并重新解码验证。
+  const std::vector<MatrixFormat> formats = {
+      {Format::Jpeg, "jpeg", "jpg"},
+      {Format::Tiff, "tiff", "tiff"},
+      {Format::Png, "png", "png"},
+      {Format::Jpeg2000, "jpeg2000-jp2", "jp2"},
+      {Format::Jpeg2000, "jpeg2000-j2k", "j2k",
+       image_codec::offload::Jpeg2000Container::J2k},
+      {Format::Jpeg2000, "jpeg2000-jpf", "jpf"},
+      {Format::Jpeg2000, "jpeg2000-jpx", "jpx"},
+      {Format::JpegXl, "jpeg-xl", "jxl"},
+  };
   bool hard_failure = false;
   for (const BackendKind backend : backends) {
-    for (const Format format : formats) {
+    for (const MatrixFormat &matrix_format : formats) {
       const std::string backend_name =
           image_codec::offload::backendName(backend);
-      const std::string format_name = image_codec::offload::formatName(format);
+      const std::string format_name = matrix_format.name;
       const auto output = std::filesystem::path(output_dir) /
                           (backend_name + "-" + format_name + "." +
-                           formatSuffix(format));
+                           matrix_format.suffix);
       const long long start = nowMicros();
-      auto encoded = router.encodeWith(backend, format, source, EncodeParams{});
+      EncodeParams params;
+      params.jpeg2000_container = matrix_format.jpeg2000Container;
+      auto encoded = router.encodeWith(backend, matrix_format.format, source,
+                                       params);
       const double elapsed = static_cast<double>(nowMicros() - start) / 1000.0;
       if (!encoded) {
         const auto status = encoded.error().code;
@@ -149,8 +151,8 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
         hard_failure = true;
         continue;
       }
-      auto decoded = router.decodeWith(backend, format, encoded->data(),
-                                       encoded->size());
+      auto decoded = router.decodeWith(backend, matrix_format.format,
+                                       encoded->data(), encoded->size());
       if (!decoded || decoded->width != source.width ||
           decoded->height != source.height ||
           decoded->channels != source.channels) {

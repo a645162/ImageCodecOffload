@@ -228,6 +228,11 @@ ico compare <a> <b> [--backend cpu|opencl|cuda]  # 三后端的 MSE/PSNR/SSIM/MS
 
 BMP 只作为中转格式（`info`/`decode` 的输出、`compare` 的输入），它不是目标格式。
 
+`ico matrix` 会实际生成并回读 `JPEG/TIFF/PNG/JP2/J2K/JPF/JPX/JXL` 的每一种
+目标后缀；manifest 用 `jpeg2000-jp2`、`jpeg2000-j2k`、`jpeg2000-jpf`、
+`jpeg2000-jpx` 分别记录。不要把 JPEG 2000 折叠成单个 `.jp2` 项：`.j2k` 是裸
+codestream，其余三个是 JP2 容器家族，发布回归必须保留这四个独立产物。
+
 ## 约束
 
 - `ImageCodecOpenCL` **不引用** `ImageCodecPlatform`（纯 OpenCL，自包含）。
