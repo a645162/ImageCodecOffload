@@ -19,8 +19,10 @@
 // 有一处不同，两个后端的数字就会稳定地差在 1e-3 量级——肉眼看不出来，但横向
 // 比较全部作废。这条命令就是那条护栏，别把它改成「随便用一个后端算一下」。
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -54,6 +56,7 @@ void printUsage() {
       "                        [--compression N] [--tile N] [--rows N]\n"
       "                        [--png-level N] [--png-filter N]\n"
       "                        [--backend cpu|opencl|cuda|vulkan]\n"
+      "  ico encode-stream-jp2 <in.bmp> <out.jp2|out.j2k>\n"
       "  ico decode <in> <out.bmp> [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan]\n"
       "  ico matrix <input.bmp> <output-dir>\n"
@@ -66,6 +69,113 @@ bool writeFile(const std::string &path, const std::vector<uint8_t> &data,
 bool loadImage(Router &router, const std::string &path, Image *out,
                std::string *err);
 long long nowMicros();
+
+uint16_t readLe16(const uint8_t *data) {
+  return static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
+}
+
+uint32_t readLe32(const uint8_t *data) {
+  return static_cast<uint32_t>(data[0]) |
+         (static_cast<uint32_t>(data[1]) << 8) |
+         (static_cast<uint32_t>(data[2]) << 16) |
+         (static_cast<uint32_t>(data[3]) << 24);
+}
+
+struct Bmp24RowSource final {
+  std::ifstream input;
+  int width = 0;
+  int height = 0;
+  uint64_t pixelOffset = 0;
+  uint64_t stride = 0;
+  bool bottomUp = false;
+
+  static bool open(const std::string &path, Bmp24RowSource *out,
+                   std::string *error) {
+    out->input.open(path, std::ios::binary);
+    std::array<uint8_t, 54> header{};
+    if (!out->input.read(reinterpret_cast<char *>(header.data()), header.size())) {
+      *error = "cannot read BMP header";
+      return false;
+    }
+    const int32_t width = static_cast<int32_t>(readLe32(header.data() + 18));
+    const int32_t rawHeight = static_cast<int32_t>(readLe32(header.data() + 22));
+    if (header[0] != 'B' || header[1] != 'M' || readLe32(header.data() + 14) < 40 ||
+        width <= 0 || rawHeight == 0 || readLe16(header.data() + 26) != 1 ||
+        readLe16(header.data() + 28) != 24 || readLe32(header.data() + 30) != 0) {
+      *error = "streaming only supports uncompressed 24-bit BMP";
+      return false;
+    }
+    out->width = width;
+    out->height = rawHeight > 0 ? rawHeight : -rawHeight;
+    out->pixelOffset = readLe32(header.data() + 10);
+    out->stride = (static_cast<uint64_t>(width) * 3U + 3U) & ~uint64_t{3};
+    out->bottomUp = rawHeight > 0;
+    return true;
+  }
+};
+
+ico_status readBmp24StreamingRow(void *user, const int y, uint8_t *destination,
+                                 const size_t destinationSize) {
+  auto *source = static_cast<Bmp24RowSource *>(user);
+  if (source == nullptr || destination == nullptr || y < 0 || y >= source->height ||
+      destinationSize != static_cast<size_t>(source->width) * 3U) {
+    return ICO_ERR_INVALID_ARGUMENT;
+  }
+  const int fileRow = source->bottomUp ? source->height - 1 - y : y;
+  source->input.seekg(static_cast<std::streamoff>(
+      source->pixelOffset + static_cast<uint64_t>(fileRow) * source->stride));
+  std::vector<uint8_t> bgr(static_cast<size_t>(source->stride));
+  if (!source->input.read(reinterpret_cast<char *>(bgr.data()),
+                          static_cast<std::streamsize>(bgr.size()))) {
+    return ICO_ERR_IO;
+  }
+  for (int x = 0; x < source->width; ++x) {
+    const auto i = static_cast<size_t>(x) * 3U;
+    destination[i] = bgr[i + 2];
+    destination[i + 1] = bgr[i + 1];
+    destination[i + 2] = bgr[i];
+  }
+  return ICO_OK;
+}
+
+int cmdEncodeStreamJpeg2000(const std::string &input, const std::string &output) {
+  const auto dot = output.find_last_of('.');
+  const auto extension = dot == std::string::npos ? std::string() : output.substr(dot);
+  std::string lowered = extension;
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (lowered != ".jp2" && lowered != ".j2k" && lowered != ".jpf" && lowered != ".jpx") {
+    std::fprintf(stderr, "error: streaming output must use .jp2/.j2k/.jpf/.jpx\n");
+    return 1;
+  }
+  Bmp24RowSource source;
+  std::string error;
+  if (!Bmp24RowSource::open(input, &source, &error)) {
+    std::fprintf(stderr, "error: %s\n", error.c_str());
+    return 1;
+  }
+  ico_codec *codec = nullptr;
+  if (image_codec_offload_create_forced(&codec, ICO_BACKEND_CPU) != ICO_OK ||
+      codec == nullptr) {
+    std::fprintf(stderr, "error: cannot create CPU streaming codec\n");
+    return 1;
+  }
+  const auto start = nowMicros();
+  const auto status = image_codec_offload_encode_jpeg2000_rows(
+      codec, output.c_str(), source.width, source.height, 3,
+      lowered == ".j2k" ? ICO_JPEG2000_CONTAINER_J2K : ICO_JPEG2000_CONTAINER_JP2,
+      readBmp24StreamingRow, &source);
+  image_codec_offload_destroy(codec);
+  if (status != ICO_OK) {
+    std::fprintf(stderr, "streaming encode failed: %s\n",
+                 image_codec_offload_status_string(status));
+    return 1;
+  }
+  const auto milliseconds = static_cast<double>(nowMicros() - start) / 1000.0;
+  std::printf("%dx%d x3 BMP -> JPEG 2000 CPU tile stream in %.1f ms\n",
+              source.width, source.height, milliseconds);
+  return 0;
+}
 
 int cmdMatrix(const std::string &input, const std::string &output_dir) {
   Router router;
@@ -639,6 +749,14 @@ int main(int argc, char **argv) {
       return 1;
     }
     return cmdEncode(positional[0], positional[1], params, force, forced_kind);
+  }
+
+  if (command == "encode-stream-jp2") {
+    if (positional.size() != 2 || force) {
+      printUsage();
+      return 1;
+    }
+    return cmdEncodeStreamJpeg2000(positional[0], positional[1]);
   }
 
   if (command == "decode") {
