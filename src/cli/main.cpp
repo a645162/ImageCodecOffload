@@ -71,6 +71,9 @@ void printUsage() {
       "  ico compare <a> <b> [--backend cpu|opencl|cuda|vulkan] [--tolerance "
       "1e-9]\n"
       "  ico matrix <input.bmp> <output-dir>\n"
+      "                        [--only-backend cpu|opencl|cuda|vulkan]...\n"
+      "                        [--only-format "
+      "jpeg|tiff|png|jpeg2000-jp2|...]...\n"
       "  ico matrix-metrics <input.bmp> <artifacts-dir> <report-dir>\n"
       "                        [--only-backend cpu|opencl|cuda|vulkan]...\n"
       "                        [--only-format "
@@ -79,6 +82,9 @@ void printUsage() {
       "                        [--resume]\n"
       "\n"
       "in/out 的格式由文件内容（魔数）与扩展名共同决定；BMP 只用于中转。\n"
+      "两条矩阵命令共用 --only-backend / --only-format：大图一次跑几小时，\n"
+      "只补某一格时不必重跑整张表。matrix 每次都整份重写，--resume 只对\n"
+      "matrix-metrics 有效。\n"
       "matrix-metrics 每完成一格就原子重写 manifest.csv；--resume 复用其中\n"
       "passed/skipped 的格子，只重算 failed 的格子。--metrics-backend 只换算\n"
       "指标的后端（1.9 GB 图实测：CPU 串行约 340 s、24 线程约 52 s、GPU 约 23 "
@@ -643,7 +649,7 @@ int main(int argc, char **argv) {
           std::fprintf(stderr, "error: unknown backend: %s\n", value.c_str());
           return 1;
         }
-        metrics_options.backends.push_back(kind);
+        metrics_options.filter.backends.push_back(kind);
       }
     } else if (arg == "--only-format") {
       const std::vector<std::string> values = splitList(next("--only-format"));
@@ -651,7 +657,8 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "error: --only-format needs a value\n");
         return 1;
       }
-      metrics_options.formats.insert(metrics_options.formats.end(),
+      metrics_options.filter.formats.insert(
+                                     metrics_options.filter.formats.end(),
                                      values.begin(), values.end());
     } else if (arg == "--resume") {
       metrics_options.resume = true;
@@ -729,7 +736,13 @@ int main(int argc, char **argv) {
       printUsage();
       return 1;
     }
-    return cmdMatrix(positional[0], positional[1]);
+    // matrix 每次都整份重写，没有可续跑的已完成格子；--resume 传进来是误用，
+    // 静默忽略会让人以为「接着上次跑」，所以直接拒绝。
+    if (metrics_options.resume) {
+      std::fprintf(stderr, "error: --resume is only valid for matrix-metrics\n");
+      return 1;
+    }
+    return cmdMatrix(positional[0], positional[1], metrics_options.filter);
   }
 
   if (command == "matrix-metrics") {

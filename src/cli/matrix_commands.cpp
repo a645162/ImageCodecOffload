@@ -286,7 +286,23 @@ void printUnknownFormats(const std::vector<std::string> &requested) {
 
 } // namespace
 
-int cmdMatrix(const std::string &input, const std::string &output_dir) {
+int cmdMatrix(const std::string &input, const std::string &output_dir,
+              const MatrixFilter &filter) {
+  // 与 matrix-metrics 同样的理由：拼错的格式名必须在读图之前报错，绝不能
+  // 退化成「跑全部」——那会先把一张 1.9 GB 的图读进内存再报错。
+  std::vector<std::string> unknown_formats;
+  for (const std::string &name : filter.formats) {
+    const bool known = std::any_of(
+        matrixFormats().begin(), matrixFormats().end(),
+        [&name](const MatrixFormat &format) { return name == format.name; });
+    if (!known) unknown_formats.push_back(name);
+  }
+  if (!unknown_formats.empty()) {
+    printUnknownFormats(unknown_formats);
+    std::fprintf(stderr, "error: --only-format matched no matrix format\n");
+    return 1;
+  }
+
   Router router;
   std::string error;
   Image source;
@@ -311,25 +327,26 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
   manifest << kMatrixHeader << std::setprecision(17);
 
   bool hard_failure = false;
-  for (const BackendKind backend : matrixBackends()) {
-    for (const MatrixFormat &matrix_format : matrixFormats()) {
+  for (const BackendKind backend : selectedBackends(filter.backends)) {
+    for (const MatrixFormat *matrix_format :
+         selectedFormats(filter.formats)) {
       const std::string backend_name =
           image_codec::offload::backendName(backend);
-      const std::string format_name = matrix_format.name;
+      const std::string format_name = matrix_format->name;
       const std::string encode_mode =
           image_codec::offload::executionModeName(router.executionMode(
-              backend, matrix_format.format, CodecDirection::Encode));
+              backend, matrix_format->format, CodecDirection::Encode));
       const std::string decode_mode =
           image_codec::offload::executionModeName(router.executionMode(
-              backend, matrix_format.format, CodecDirection::Decode));
+              backend, matrix_format->format, CodecDirection::Decode));
       const auto output =
           std::filesystem::path(output_dir) /
-          (backend_name + "-" + format_name + "." + matrix_format.suffix);
+          (backend_name + "-" + format_name + "." + matrix_format->suffix);
       const long long start = nowMicros();
       EncodeParams params;
-      params.jpeg2000_container = matrix_format.jpeg2000_container;
+      params.jpeg2000_container = matrix_format->jpeg2000_container;
       auto encoded =
-          router.encodeWith(backend, matrix_format.format, source, params);
+          router.encodeWith(backend, matrix_format->format, source, params);
       const double elapsed = static_cast<double>(nowMicros() - start) / 1000.0;
       if (!encoded) {
         const auto status = encoded.error().code;
@@ -362,7 +379,7 @@ int cmdMatrix(const std::string &input, const std::string &output_dir) {
         hard_failure = true;
         continue;
       }
-      auto decoded = router.decodeWith(backend, matrix_format.format,
+      auto decoded = router.decodeWith(backend, matrix_format->format,
                                        encoded->data(), encoded->size());
       if (!decoded || decoded->width != source.width ||
           decoded->height != source.height ||
@@ -437,7 +454,7 @@ int cmdMatrixMetrics(const std::string &input, const std::string &artifacts_dir,
   // 参数校验必须在读图之前：拼错的格式名绝不能退化成「跑全部」——那不只是
   // 「以为只跑了一格」的误会，还会先把一张 1.9 GB 的图读进内存再报错。
   std::vector<std::string> unknown_formats;
-  for (const std::string &name : options.formats) {
+  for (const std::string &name : options.filter.formats) {
     const bool known = std::any_of(
         matrixFormats().begin(), matrixFormats().end(),
         [&name](const MatrixFormat &format) { return name == format.name; });
@@ -457,9 +474,10 @@ int cmdMatrixMetrics(const std::string &input, const std::string &artifacts_dir,
     return 1;
   }
 
-  const std::vector<BackendKind> backends = selectedBackends(options.backends);
+  const std::vector<BackendKind> backends =
+      selectedBackends(options.filter.backends);
   const std::vector<const MatrixFormat *> formats =
-      selectedFormats(options.formats);
+      selectedFormats(options.filter.formats);
 
   std::error_code directory_error;
   std::filesystem::create_directories(report_dir, directory_error);

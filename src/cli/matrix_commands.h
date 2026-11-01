@@ -22,11 +22,17 @@
 
 namespace ico_cli {
 
-struct MatrixMetricsOptions final {
+// 「后端 × 格式」的格子过滤。`matrix` 与 `matrix-metrics` 共用同一个结构，
+// 避免两条命令各自发明一套过滤语义——报告里同名格子的集合必须能一一对上。
+struct MatrixFilter final {
   // 只跑这些后端；为空表示全部（cpu / opencl / cuda / vulkan）。
   std::vector<image_codec::offload::BackendKind> backends;
   // 只跑这些格式名（jpeg / tiff / png / jpeg2000-jp2 / ...）；为空表示全部。
   std::vector<std::string> formats;
+};
+
+struct MatrixMetricsOptions final {
+  MatrixFilter filter;
   // 续跑：读取 report_dir 里已有的 manifest.csv，复用其中 passed/skipped 的行，
   // 只重算 failed 的格子；不写这个开关就是从头跑并覆盖旧 manifest。
   bool resume = false;
@@ -36,7 +42,8 @@ struct MatrixMetricsOptions final {
   std::optional<image_codec::offload::BackendKind> metrics_backend;
 };
 
-int cmdMatrix(const std::string &input, const std::string &output_dir);
+int cmdMatrix(const std::string &input, const std::string &output_dir,
+              const MatrixFilter &filter);
 int cmdMatrixMetrics(const std::string &input, const std::string &artifacts_dir,
                      const std::string &report_dir,
                      const MatrixMetricsOptions &options);
