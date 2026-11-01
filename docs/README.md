@@ -188,6 +188,8 @@ CPU 没有可移植、可靠的“当前可安全分配内存”计数器，因�
 这个入口**固定是 CPU/OpenJPEG**，`last_execution_mode` 会报告 `CPU`，不会初始化或
 冒充 OpenCL/CUDA/Vulkan staging。JPEG XL 目前没有等价的行输入契约，仍明确拒绝
 流式输出；不得为了“支持流式”而在调用方或库内暗中聚合整幅图。
+行回调返回的非 `ICO_OK` 状态会原样返回给调用方，并删除部分输出；不会被笼统改写成
+`ICO_ERR_ENCODE_FAILED`。
 
 ## 构建
 

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <chrono>
 
@@ -270,6 +271,7 @@ Result<void> encodeJpeg2000Rows(const std::filesystem::path &path,
 
   std::vector<uint8_t> row(rowBytes);
   std::vector<uint8_t> tile;
+  std::optional<Error> rowReaderError;
   for (int y = 0; ok && y < height; y += tileRows) {
     const int rows = std::min(tileRows, height - y);
     const auto pixels = static_cast<size_t>(width) * static_cast<size_t>(rows);
@@ -277,6 +279,7 @@ Result<void> encodeJpeg2000Rows(const std::filesystem::path &path,
     for (int tileY = 0; ok && tileY < rows; ++tileY) {
       auto read = rowReader(y + tileY, row);
       if (!read) {
+        rowReaderError = read.error();
         ok = false;
         break;
       }
@@ -303,6 +306,9 @@ Result<void> encodeJpeg2000Rows(const std::filesystem::path &path,
   if (!ok) {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+    if (rowReaderError.has_value()) {
+      return std::unexpected(std::move(*rowReaderError));
+    }
     return fail<void>(Status::EncodeFailed,
                       "openjpeg: streaming tile encode failed");
   }

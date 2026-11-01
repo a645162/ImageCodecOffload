@@ -50,6 +50,7 @@ int g_failures = 0;
 struct StreamingRowReaderState {
   const Image *image = nullptr;
   int rowsRead = 0;
+  int failAtRow = -1;
 };
 
 ico_status readStreamingRow(void *user, const int y, uint8_t *destination,
@@ -60,6 +61,7 @@ ico_status readStreamingRow(void *user, const int y, uint8_t *destination,
       destinationSize != state->image->rowBytes()) {
     return ICO_ERR_INVALID_ARGUMENT;
   }
+  if (y == state->failAtRow) return ICO_ERR_IO;
   std::copy_n(state->image->pixels.data() +
                   static_cast<size_t>(y) * state->image->rowBytes(),
               state->image->rowBytes(), destination);
@@ -347,6 +349,34 @@ void testJpeg2000RowStreamingCapi() {
               decoded->channels == kChannels,
           "jpeg2000 streaming C API preserves geometry and channels");
   }
+}
+
+void testJpeg2000RowStreamingCapiPropagatesReaderError() {
+  const Image source = makeImage(17, 19, 3);
+  const auto path = std::filesystem::temp_directory_path() /
+                    "imagecodec-jpeg2000-row-streaming-failure.jp2";
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
+  ico_codec *codec = nullptr;
+  check(image_codec_offload_create_forced(&codec, ICO_BACKEND_CPU) == ICO_OK &&
+            codec != nullptr,
+        "create forced CPU codec for streaming reader error");
+  if (codec == nullptr) return;
+  StreamingRowReaderState state{.image = &source, .failAtRow = 3};
+  const auto status = image_codec_offload_encode_jpeg2000_rows(
+      codec, path.string().c_str(), source.width, source.height,
+      source.channels, ICO_JPEG2000_CONTAINER_JP2, readStreamingRow, &state);
+  image_codec_offload_destroy(codec);
+  if (status == ICO_ERR_BACKEND_UNAVAILABLE) {
+    std::filesystem::remove(path, ignored);
+    return;
+  }
+  check(status == ICO_ERR_IO,
+        "jpeg2000 streaming C API preserves row-reader error status");
+  check(state.rowsRead == 3,
+        "jpeg2000 streaming stops before consuming rows after reader error");
+  check(!std::filesystem::exists(path),
+        "jpeg2000 streaming removes partial output after reader error");
 }
 
 void testJpegXlCpuRoundtrip() {
@@ -2055,6 +2085,7 @@ int main() {
   testJpeg2000CpuRoundtrip();
   testJpeg2000RowStreaming();
   testJpeg2000RowStreamingCapi();
+  testJpeg2000RowStreamingCapiPropagatesReaderError();
   testJpegXlCpuRoundtrip();
   testGpuHybridNewFormatRoundtrip();
   testBmpRoundtrip();
