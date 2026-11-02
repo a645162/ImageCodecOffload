@@ -360,6 +360,15 @@ CPU 指标的 11×11 窗按 band 并行计算、**累加顺序保持不变**，�
     所以 CPU 自身在任意线程数下逐位一致。
 - 子项目的 CMake 用 `PROJECT_SOURCE_DIR` 定位自己的 `include/`：
   它们会被 `add_subdirectory` 复用，`CMAKE_SOURCE_DIR` 会指向父工程根目录。
+- `ImageCodecOpenCL` 的 CL 头声明面固定为 **OpenCL 1.2**
+  （`CL_TARGET_OPENCL_VERSION=120`，由 `OpenCL.Image.Codec.Core` 以 `PUBLIC` 传出，
+  所有 `OpenCL.Image.Codec.*` 与路由层的 OpenCL TU 一起继承）：
+  它的全部 kernel 都以 `-cl-std=CL1.2` 构建，host 侧也只用 1.x 入口。
+  **不要**把它抬到 300——AMD 的 GPU 运行时最高只声称 2.0/2.1、根本不导出 3.0 入口，
+  声明面放到 3.0 会让 `clCreateBufferWithProperties` /
+  `clSetProgramSpecializationConstant` 这类符号变成「可见」，编译期毫无提示，
+  链接期或运行期才炸。不定义该宏时 `CL/cl_version.h` 只会打一句
+  "Defaulting to 300 (OpenCL 3.0)" 就继续编译，所以这条警告不是噪音而是缺口。
 
 ## 目录结构
 
