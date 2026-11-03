@@ -29,6 +29,9 @@ cmake --build build -j
 ```
 
 CUDA 后端加 `-DIMAGECODEC_OFFLOAD_WITH_CUDA=ON`（需要 CUDA Toolkit / nvJPEG）。
+NVIDIA 厂商层（nvJPEG / nvJPEG2000 / nvTIFF，只加库、不进路由表）加
+`-DIMAGECODEC_OFFLOAD_WITH_NVIDIA_PLATFORM=ON`；它不需要 nvcc，选装自测 CLI 见
+`docs/README.md` 的「`Image.Codec.Platform.NVIDIA` 的依赖」。
 
 ## 内容
 
@@ -40,6 +43,7 @@ CUDA 后端加 `-DIMAGECODEC_OFFLOAD_WITH_CUDA=ON`（需要 CUDA Toolkit / nvJPE
 | `src/libs/Image.Codec.CUDA` | NVIDIA 后端：nvJPEG、GPU LZW、GPU 行滤波、GPU 指标、调参库 |
 | `src/libs/Image.Codec.OpenCL` | OpenCL 后端：混合 JPEG、GPU LZW |
 | `src/libs/Image.Codec.Platform.Intel` | 平台抽象与 Intel oneVPL 硬件后端 |
+| `src/libs/Image.Codec.Platform.NVIDIA` | NVIDIA 厂商后端：nvJPEG、nvJPEG2000（JP2）、nvTIFF（容器 + LZW/Deflate/JPEG/PackBits） |
 | `src/libs/Image.Codec.Vulkan` | Vulkan compute 编解码：TIFF（Predictor=2）、PNG 行滤波、baseline JPEG、画质指标 |
 | `tests/` | 端到端测试：往返、指标 golden、三后端对拍、灰度保真、回退原因 |
 

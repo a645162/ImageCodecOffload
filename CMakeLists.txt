@@ -50,6 +50,11 @@ option(IMAGECODEC_OFFLOAD_WITH_JXL "Enable JPEG XL CPU support" ON)
 # 硬件 JPEG + TIFF(JPEG strips) 容器。默认关闭：它依赖 libvpl 头文件子模块，
 # 且只有 Intel 核显机器才用得上；打开它不会改变路由后端表（见 docs/README.md）。
 option(IMAGECODEC_OFFLOAD_WITH_PLATFORM "Build the platform / Intel oneVPL backend (Image.Codec.Platform.Intel)" OFF)
+# Image.Codec.Platform.NVIDIA：NVIDIA 厂商编解码（nvJPEG / nvJPEG2000 / nvTIFF）。
+# 默认关闭：nvJPEG2000 与 nvTIFF 是独立安装的包（不是 CUDA Toolkit 的一部分），
+# 没有的机器上配置期会打印一行 STATUS 并把对应编解码标记为不可用；打开它同样
+# 不改变路由后端表（见 docs/README.md）。
+option(IMAGECODEC_OFFLOAD_WITH_NVIDIA_PLATFORM "Build the NVIDIA vendor codec backend (Image.Codec.Platform.NVIDIA)" OFF)
 option(IMAGECODEC_OFFLOAD_BUILD_CLI "Build the ico CLI" ON)
 option(IMAGECODEC_OFFLOAD_BUILD_TESTS "Build the test suite" OFF)
 
@@ -95,6 +100,13 @@ endif()
 # 自测 CLI（OIC_BUILD_CLI，默认 OFF），作为父项目的一部分构建时不带 CLI。
 if(IMAGECODEC_OFFLOAD_WITH_PLATFORM)
   add_subdirectory(src/libs/Image.Codec.Platform.Intel)
+endif()
+
+# NVIDIA 厂商编解码（nvJPEG / nvJPEG2000 / nvTIFF）。与 Platform.Intel 并列：
+# 厂商层工程只依赖 CUDA Runtime 与三个厂商运行库，不需要 nvcc 编译任何源码，
+# 因此不打开 WITH_CUDA 也能单独构建（有显卡没显卡都能配置）。
+if(IMAGECODEC_OFFLOAD_WITH_NVIDIA_PLATFORM)
+  add_subdirectory(src/libs/Image.Codec.Platform.NVIDIA)
 endif()
 
 # Vulkan 后端：TIFF / PNG 与画质指标已实现；JPEG 尚未实现，由能力表

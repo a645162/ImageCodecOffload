@@ -16,6 +16,7 @@ git submodule，现已**并入本仓库的源码树**（`src/libs/`）：同一�
 同一份版本，不再需要「指针对不齐」的三级提交。只有 `Image.Codec.Platform.Intel`
 内部的两个 Intel 第三方库（`3rdparty/libvpl`、`3rdparty/vpl-gpu-rt`）仍是 git
 submodule，首次克隆需 `git submodule update --init --recursive`。
+`Image.Codec.Platform.NVIDIA`（厂商层：nvJPEG / nvJPEG2000 / nvTIFF）从建立起就在本仓库内。
 
 ```
 调用方（ImageViewer / 脚本 / 自己的程序）
@@ -37,6 +38,7 @@ src/libs/Image.Codec.Offload.Router   ← 后端选择 / 回退 / 记录原因
 | `Image.Codec.CUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库；JP2/JXL 当前仅 GPU staging | `image_codec_cuda_*`（`<Image/Codec/CUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
 | `Image.Codec.OpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU）；JP2/JXL 当前仅 GPU staging | `image_codec_*`（`<Image/Codec/OpenCL/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
 | `Image.Codec.Platform.Intel` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | 构建期仅 oneVPL 头（`3rdparty/libvpl`）；运行期 `libvpl2` + `libmfx-gen1.2`（vpl-gpu-rt）+ `intel-media-va-driver`（Windows：Intel 显卡驱动自带 `libvpl.dll`/`libmfx-gen.dll`）。Linux / Windows 双平台，帧只走系统内存 |
+| `Image.Codec.Platform.NVIDIA` | NVIDIA 厂商编解码：`Core`（设备枚举 / 显式 stream / 显存记账）+ `Jpeg`（nvJPEG baseline JPEG）+ `Jpeg2K`（nvJPEG2000，默认写 JP2 容器）+ `Tiff`（nvTIFF：容器与 NONE/LZW/Deflate/JPEG/PackBits 全在该库内）。8 bit、通道保真（JPEG/TIFF 支持 1 与 3，TIFF 解码保留 1..4） | -（尚未接入 `ico` / 路由表） | 构建期 CUDA Runtime（cudart）+ `nvjpeg`（Toolkit 内）+ `nvjpeg2k` / `nvtiff`（**独立安装的包**）；**不需要 nvcc**，没有 GPU 也能编译。运行期需 NVIDIA 驱动与对应运行库 |
 | `Image.Codec.Vulkan` | Vulkan compute 编解码：TIFF（容器 + LZW(CPU) + Predictor=2(GPU)）、PNG（行滤波 GPU + DEFLATE(CPU)）、baseline JPEG（Huffman/容器 CPU + DCT/颜色变换 GPU）、画质指标（fp64）；JP2/JXL 当前仅设备 staging；另含 Win32 external-memory → OpenGL 互操作（仅 Windows） | `image_codec_vulkan_*`（`<Image/Codec/Vulkan/image_codec_vulkan.h>`） | Vulkan SDK / vcpkg `vulkan`；vcpkg `glslang` 库（构建期编译 shader） |
 
 ## 能力矩阵（现状）
@@ -243,6 +245,7 @@ cmake --build build -j
 | `IMAGECODEC_OFFLOAD_WITH_OPENCL` | `ON` | 构建 OpenCL 后端 |
 | `IMAGECODEC_OFFLOAD_WITH_CUDA` | `OFF` | 构建 CUDA 后端（顶层会在 `project()` 前探测 `nvcc`） |
 | `IMAGECODEC_OFFLOAD_WITH_PLATFORM` | `OFF` | 构建 `Image.Codec.Platform.Intel`（平台抽象 + Intel oneVPL 硬件 JPEG / TIFF JPEG strips）。**只加库，不动路由后端表与 `ico`** |
+| `IMAGECODEC_OFFLOAD_WITH_NVIDIA_PLATFORM` | `OFF` | 构建 `Image.Codec.Platform.NVIDIA`（nvJPEG + nvJPEG2000 + nvTIFF）。**只加库，不动路由后端表与 `ico`**；不需要 nvcc，`nvjpeg2k` / `nvtiff` 缺哪个就把对应 codec 标为不可用 |
 | `IMAGECODEC_OFFLOAD_WITH_VULKAN` | `OFF` | 构建 Vulkan 后端（JPEG/TIFF/PNG + 指标）。需要 GLSL 编译器（`glslc` 或 `glslangValidator`） |
 | `IMAGECODEC_OFFLOAD_BUILD_CLI` | `ON` | 构建 `ico` |
 | `IMAGECODEC_OFFLOAD_BUILD_TESTS` | `OFF` | 构建并注册 ctest（`ico_test` + 各子项目测试） |
@@ -268,6 +271,36 @@ git submodule update --init --recursive   # 3rdparty/libvpl（头）、3rdparty/
 
 明确不需要：D3D11/DXGI、OpenCL/CUDA 运行库、X server（纯计算，可无显示器）、root 权限。
 依赖细节与实测环境见 `src/libs/Image.Codec.Platform.Intel/README.md` 的「依赖清单」。
+
+### `Image.Codec.Platform.NVIDIA` 的依赖（`_WITH_NVIDIA_PLATFORM=ON` 时才相关）
+
+三个厂商库分两类来源，**都不需要 nvcc**（本工程不 `enable_language(CUDA)`、不编 `.cu`、
+不涉及 sm 架构），因此没有 GPU 的编译机也能配置和构建：
+
+| 组件 | 来源 | 发现方式 |
+| --- | --- | --- |
+| `nvjpeg`（JPEG） | CUDA Toolkit 自带 | 导入目标 `CUDA::nvjpeg` |
+| `nvjpeg2k`（JPEG 2000 / JP2） | **独立安装的包** | `find_path(nvjpeg2k.h)` + `find_library(nvjpeg2k)` → `NVIDIA::nvjpeg2k` |
+| `nvtiff`（TIFF） | **独立安装的包** | `find_path(nvtiff.h)` + `find_library(nvtiff)` → `NVIDIA::nvtiff` |
+
+版本目录不写死（`/usr/include` 上是 alternatives 符号链接，版本随包变化）。缺哪一项就打印一行
+`STATUS` 并把该 codec 的 `available()` 置假，**不 FATAL**；子项目自测 CLI（`OIC_BUILD_CLI`，
+父项目内默认关闭）里对应项 SKIP。
+
+```bash
+cmake -S src/libs/Image.Codec.Platform.NVIDIA -B build/ico-nvidia \
+  -DCMAKE_BUILD_TYPE=Debug -DOIC_BUILD_CLI=ON
+cmake --build build/ico-nvidia -j
+./build/ico-nvidia/src/cli/inp_selftest
+```
+
+实测（RTX 4070 / CUDA 13.3 / nvJPEG2000 0.12 / nvTIFF 0.9）：nvJPEG RGB 51.4 dB、灰度 71.4 dB；
+nvJPEG2000 无损**逐字节相等**、有损 59~62 dB；nvTIFF NONE/LZW/Deflate 逐字节相等。
+
+**nvTIFF 的编码输入没有 pitch**：`nvtiffEncodeParamsSetInputs` 只收裸指针，库按
+`width × bits_per_pixel` 紧密连续读行。用 `cudaMallocPitch` 分配并按 pitch 上传会编出
+「几何正确、像素全错」的图（连 Compression=NONE 都不是无损）。编码侧必须紧密打包；
+解码侧 `nvtiffImage_t` 自带 `plane_pitch_bytes`，可以用 pitch 缓冲。
 
 ## CLI `ico`
 
@@ -393,6 +426,7 @@ src/
     ├── Image.Codec.Vulkan/
     └── Image.Codec.Platform.Intel/   # Intel oneVPL 硬件路径
         └── 3rdparty/                 # libvpl / vpl-gpu-rt（仅这两处仍是 git submodule）
+    └── Image.Codec.Platform.NVIDIA/  # NVIDIA 厂商路径（nvJPEG / nvJPEG2000 / nvTIFF）
 tests/                             # ico_test
 docs/                              # plan / report / 本文件
 ```
