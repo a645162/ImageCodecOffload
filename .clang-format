@@ -1,5 +1,5 @@
 ---
-# ImageCodecOffload（GPU 图像编解码主工程） 的 C++ 风格配置。
+# Image.Codec.Offload（GPU 图像编解码主工程） 的 C++ 风格配置。
 #
 # 与主工程 ImageViewerQt 的根级 .clang-format 同源：缩进锁死 2 空格 / 80 列，
 # 指针与引用贴名字，include 不重排（本仓库按模块人工分组，字典序重排只会制造噪声）。

@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.24)
 # nvcc 不一定在 PATH 上（例如只通过 /usr/local/cuda-13.2 安装）。若下面打开了
 # IMAGECODEC_OFFLOAD_WITH_CUDA，需要在 project() 之前把编译器找出来，否则
 # enable_language(CUDA) 会直接失败。
-option(IMAGECODEC_OFFLOAD_WITH_CUDA "Build the CUDA backend (ImageCodecCUDA)" OFF)
+option(IMAGECODEC_OFFLOAD_WITH_CUDA "Build the CUDA backend (Image.Codec.CUDA)" OFF)
 
 if(IMAGECODEC_OFFLOAD_WITH_CUDA AND NOT DEFINED CMAKE_CUDA_COMPILER AND NOT DEFINED ENV{CUDACXX})
   find_program(_ico_nvcc
@@ -27,7 +27,7 @@ if(IMAGECODEC_OFFLOAD_WITH_CUDA AND NOT DEFINED CMAKE_CUDA_COMPILER AND NOT DEFI
   endif()
 endif()
 
-project(ImageCodecOffload LANGUAGES C CXX)
+project(Image.Codec.Offload LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -42,14 +42,14 @@ endif()
 # ---- 后端开关 ----
 # 默认只开 OpenCL：它在三家里覆盖面最广（Intel/NVIDIA/AMD），并且不要求
 # 额外的工具链。CUDA / Vulkan 由使用方按机器显式打开。
-option(IMAGECODEC_OFFLOAD_WITH_OPENCL "Build the OpenCL backend (ImageCodecOpenCL)" ON)
-option(IMAGECODEC_OFFLOAD_WITH_VULKAN "Build the Vulkan backend (ImageCodecVulkan)" OFF)
+option(IMAGECODEC_OFFLOAD_WITH_OPENCL "Build the OpenCL backend (Image.Codec.OpenCL)" ON)
+option(IMAGECODEC_OFFLOAD_WITH_VULKAN "Build the Vulkan backend (Image.Codec.Vulkan)" OFF)
 option(IMAGECODEC_OFFLOAD_WITH_OPENJPEG "Enable JPEG 2000 CPU support" ON)
 option(IMAGECODEC_OFFLOAD_WITH_JXL "Enable JPEG XL CPU support" ON)
-# ImageCodecPlatform：Windows / Linux 通用的平台抽象 + Intel 媒体引擎（oneVPL）
+# Image.Codec.Platform.Intel：Windows / Linux 通用的平台抽象 + Intel 媒体引擎（oneVPL）
 # 硬件 JPEG + TIFF(JPEG strips) 容器。默认关闭：它依赖 libvpl 头文件子模块，
 # 且只有 Intel 核显机器才用得上；打开它不会改变路由后端表（见 docs/README.md）。
-option(IMAGECODEC_OFFLOAD_WITH_PLATFORM "Build the platform / Intel oneVPL backend (ImageCodecPlatform)" OFF)
+option(IMAGECODEC_OFFLOAD_WITH_PLATFORM "Build the platform / Intel oneVPL backend (Image.Codec.Platform.Intel)" OFF)
 option(IMAGECODEC_OFFLOAD_BUILD_CLI "Build the ico CLI" ON)
 option(IMAGECODEC_OFFLOAD_BUILD_TESTS "Build the test suite" OFF)
 
@@ -79,25 +79,28 @@ if(IMAGECODEC_OFFLOAD_WITH_CUDA)
   enable_language(CUDA)
 endif()
 
-# ---- 子项目（git submodule）----
+# ---- 子项目（后端实现，全部在 src/libs/ 下）----
+# 这四个项目原本是 `libs/` 下的 git submodule，现已并入本仓库的源码树
+# （`src/libs/`），与路由层 / CPU 基线 / C API 并列——同一个仓库、同一次提交、
+# 同一份版本，不再需要「指针对不齐」的三级提交。
 if(IMAGECODEC_OFFLOAD_WITH_OPENCL)
-  add_subdirectory(libs/ImageCodecOpenCL)
+  add_subdirectory(src/libs/Image.Codec.OpenCL)
 endif()
 
 if(IMAGECODEC_OFFLOAD_WITH_CUDA)
-  add_subdirectory(libs/ImageCodecCUDA)
+  add_subdirectory(src/libs/Image.Codec.CUDA)
 endif()
 
 # 平台抽象 + Intel oneVPL（硬件 JPEG / TIFF JPEG strips）。子项目自己带
 # 自测 CLI（OIC_BUILD_CLI，默认 OFF），作为父项目的一部分构建时不带 CLI。
 if(IMAGECODEC_OFFLOAD_WITH_PLATFORM)
-  add_subdirectory(libs/ImageCodecPlatform)
+  add_subdirectory(src/libs/Image.Codec.Platform.Intel)
 endif()
 
 # Vulkan 后端：TIFF / PNG 与画质指标已实现；JPEG 尚未实现，由能力表
 # （capabilities.jpeg_* = 0）在选后端时挡掉，交给 OpenCL / CUDA / CPU。
 if(IMAGECODEC_OFFLOAD_WITH_VULKAN)
-  add_subdirectory(libs/ImageCodecVulkan)
+  add_subdirectory(src/libs/Image.Codec.Vulkan)
 endif()
 
 # ---- 本项目的路由层 / API / CLI ----

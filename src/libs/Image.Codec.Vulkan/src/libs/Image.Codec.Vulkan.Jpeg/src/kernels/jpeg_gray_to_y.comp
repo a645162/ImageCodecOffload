@@ -1,0 +1,46 @@
+// File      : jpeg_gray_to_y.comp
+// Brief     : JPEG 编码的「灰度样本 -> Y 平面」着色器（含块补齐，边缘复制）
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 灰度样本本身就是 Y，不需要颜色变换。单独一个着色器，避免让 rgb_to_ycbcr
+// 去猜「输入到底几个通道」——猜错的表现是灰度图被当成 RGB 逐像素错位，
+// 而且编码器照样成功，只是内容全错。
+//
+// 输入按 uint 字提交、按字节取（与 PNG 行滤波同一手法）：GLSL 的 8bit storage
+// 需要额外扩展，而按字取字节在任何 Vulkan 1.1 设备上都成立。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer SrcBuf { uint words[]; } src;
+layout(set = 0, binding = 1) buffer PlaneBuf { float plane[]; } dst;
+
+layout(push_constant) uniform Params {
+  int src_stride;   // 输入每行字节数 = width
+  int plane_stride; // 输出平面行宽（含补齐）= mcus_x * max_h * 8
+  int width;
+  int height;
+  int plane_w;
+  int plane_h;
+} pc;
+
+uint readByte(int index) {
+  const uint word = src.words[uint(index) >> 2u];
+  return (word >> (uint(index) & 3u) * 8u) & 0xFFu;
+}
+
+void main() {
+  const uint total = uint(pc.plane_w) * uint(pc.plane_h);
+  const uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+
+  for (uint gid = gl_GlobalInvocationID.x; gid < total; gid += stride) {
+    const int x = int(gid % uint(pc.plane_w));
+    const int y = int(gid / uint(pc.plane_w));
+    // 块补齐区域用边缘复制，与 OpenCL / CPU 两条路径一致。
+    const int rx = x < pc.width ? x : pc.width - 1;
+    const int ry = y < pc.height ? y : pc.height - 1;
+    dst.plane[y * pc.plane_stride + x] = float(readByte(ry * pc.src_stride + rx));
+  }
+}

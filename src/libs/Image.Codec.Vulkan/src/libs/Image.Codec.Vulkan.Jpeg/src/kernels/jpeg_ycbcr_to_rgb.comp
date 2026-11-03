@@ -1,0 +1,131 @@
+// File      : jpeg_ycbcr_to_rgb.comp
+// Brief     : JPEG 解码的「YCbCr -> RGB + 色度上采样」着色器
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 上采样按 libjpeg 的 fancy（三角滤波）规则逐像素推导：h2v2 用于 4:2:0、
+// h2v1 用于 4:2:2，边缘复制。公式与 OpenCL 版 jpeg_dec.cl、CPU 参考实现
+// jpeg_dct_cpu.cpp 三处必须一致，否则「同一张 JPEG 换后端」会差 1 个色阶。
+//
+// 输出按「一个字 4 字节」整字写入（与 PNG 行滤波同一手法）：3 通道时一个
+// 字横跨两个像素，若让每个 invocation 写 3 个字节，就会有两个 invocation
+// 对同一个字做 read-modify-write，结果取决于谁先完成。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer PlaneBuf { float planes[]; } plane_buf;
+// desc[3*6]：每分量 {off, stride, plane_w, plane_h, h_samp, v_samp}
+layout(set = 0, binding = 1) readonly buffer DescBuf { int desc[]; } desc_buf;
+layout(set = 0, binding = 2) buffer OutBuf { uint words[]; } out_buf;
+
+layout(push_constant) uniform Params {
+  int max_h;
+  int max_v;
+  int ncomp;
+  int out_stride;   // 输出每行字节数 = width * out_channels
+  int width;
+  int height;
+  int out_channels; // 1（灰度）或 3（RGB），与输入分量数一致
+} pc;
+
+// 读分量平面样本（clamp 到有效区域，返回整数样本）。
+int rd(int base, int stride, int pw, int ph, int cx, int cy) {
+  cx = clamp(cx, 0, pw - 1);
+  cy = clamp(cy, 0, ph - 1);
+  return int(plane_buf.planes[base + cy * stride + cx]);
+}
+
+// h2v2 fancy 上采样（libjpeg jdsample.c h2v2_fancy_upsample）。
+int upsample_h2v2(int base, int st, int pw, int ph, int x, int y) {
+  int cx = x >> 1;
+  int cy = y >> 1;
+  const int h = x & 1;
+  const int v = y & 1;
+  if (cx > pw - 1) cx = pw - 1;
+  if (cy > ph - 1) cy = ph - 1;
+  const int iy = cy;
+  const int oy2 = (v == 0) ? (cy > 0 ? cy - 1 : cy)
+                           : (cy + 1 < ph ? cy + 1 : cy);
+  const int s_cur = 3 * rd(base, st, pw, ph, cx, iy) + rd(base, st, pw, ph, cx, oy2);
+  if (h == 0) {
+    if (cx == 0) return (4 * s_cur + 8) >> 4;
+    return (3 * s_cur + 3 * rd(base, st, pw, ph, cx - 1, iy) +
+            rd(base, st, pw, ph, cx - 1, oy2) + 8) >>
+           4;
+  }
+  if (cx >= pw - 1) return (4 * s_cur + 7) >> 4;
+  return (3 * s_cur + 3 * rd(base, st, pw, ph, cx + 1, iy) +
+          rd(base, st, pw, ph, cx + 1, oy2) + 7) >>
+         4;
+}
+
+// h2v1 fancy 上采样（libjpeg h2v1_fancy_upsample）。
+int upsample_h2v1(int base, int st, int pw, int ph, int x, int y) {
+  int cx = x >> 1;
+  const int h = x & 1;
+  if (cx > pw - 1) cx = pw - 1;
+  const int cur = rd(base, st, pw, ph, cx, y);
+  if (h == 0) {
+    if (cx == 0) return cur;
+    return (3 * cur + rd(base, st, pw, ph, cx - 1, y) + 1) >> 2;
+  }
+  if (cx >= pw - 1) return cur;
+  return (3 * cur + rd(base, st, pw, ph, cx + 1, y) + 2) >> 2;
+}
+
+// 按分量取 (x,y) 处的样本（含上采样）。
+int sample_c(int c, int x, int y) {
+  const int off = desc_buf.desc[c * 6 + 0];
+  const int st = desc_buf.desc[c * 6 + 1];
+  const int pw = desc_buf.desc[c * 6 + 2];
+  const int ph = desc_buf.desc[c * 6 + 3];
+  const int hs = desc_buf.desc[c * 6 + 4];
+  const int vs = desc_buf.desc[c * 6 + 5];
+  if (hs == pc.max_h && vs == pc.max_v) return rd(off, st, pw, ph, x, y);
+  const int hratio = pc.max_h / hs;
+  const int vratio = pc.max_v / vs;
+  if (hratio == 2 && vratio == 2) return upsample_h2v2(off, st, pw, ph, x, y);
+  if (hratio == 2 && vratio == 1) return upsample_h2v1(off, st, pw, ph, x, y);
+  return rd(off, st, pw, ph, x * hs / pc.max_h, y * vs / pc.max_v);
+}
+
+int clampByte(int v) { return clamp(v, 0, 255); }
+
+// 单像素的 (Y, Cb, Cr) -> 目标通道的第 byte_index 个字节。
+uint pixelByte(int x, int y, int byte_index) {
+  const int yv = sample_c(0, x, y);
+  if (pc.out_channels == 1) return uint(clampByte(yv));
+
+  // libjpeg 整数系数：91881/46802/22554/116130，>>16 舍入。
+  const int cbd = sample_c(1, x, y) - 128;
+  const int crd = sample_c(2, x, y) - 128;
+  const int r = yv + ((91881 * crd + 32768) >> 16);
+  const int g = yv - ((46802 * crd + 32768) >> 16) - ((22554 * cbd + 32768) >> 16);
+  const int b = yv + ((116130 * cbd + 32768) >> 16);
+  if (byte_index == 0) return uint(clampByte(r));
+  if (byte_index == 1) return uint(clampByte(g));
+  return uint(clampByte(b));
+}
+
+void main() {
+  const uint total_bytes = uint(pc.out_stride) * uint(pc.height);
+  const uint total_words = (total_bytes + 3u) / 4u;
+  const uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+
+  for (uint word = gl_GlobalInvocationID.x; word < total_words; word += stride) {
+    const uint base = word * 4u;
+    uint packed = 0u;
+    for (uint k = 0u; k < 4u; ++k) {
+      const uint pos = base + k;
+      if (pos >= total_bytes) break;
+      const uint pixel = pos / uint(pc.out_channels);
+      const int byte_index = int(pos % uint(pc.out_channels));
+      const int x = int(pixel % uint(pc.width));
+      const int y = int(pixel / uint(pc.width));
+      packed |= pixelByte(x, y, byte_index) << (k * 8u);
+    }
+    out_buf.words[word] = packed;
+  }
+}

@@ -1,0 +1,8 @@
+// Auto-generated from lzw_encode_tile.cl —— 请勿手改（由 CMake configure_file 生成）。
+namespace image_codec {
+namespace tiff {
+const char* lzw_encode_tile_cl_source = R"KERNEL(
+@LZW_ENCODE_TILE_CL_STRING@
+)KERNEL";
+}  // namespace tiff
+}  // namespace image_codec

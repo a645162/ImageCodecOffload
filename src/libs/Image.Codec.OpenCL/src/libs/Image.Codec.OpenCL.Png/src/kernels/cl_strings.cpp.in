@@ -1,0 +1,13 @@
+// 由 CMake configure_file 生成：把 kernels/png_filter.cl 嵌入为 C 字符串。
+#include "png_filter_ocl.h"
+
+namespace image_codec {
+namespace ocl {
+namespace png {
+
+const char kPngFilterSource[] =
+R"PNGCL(@PNG_FILTER_SOURCE@)PNGCL";
+
+}  // namespace png
+}  // namespace ocl
+}  // namespace image_codec

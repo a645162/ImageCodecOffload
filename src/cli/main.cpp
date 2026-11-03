@@ -6,7 +6,7 @@
  * Created: 2026-10-31
  */
 
-// main.cpp - ico：ImageCodecOffload 的命令行入口。
+// main.cpp - ico：Image.Codec.Offload 的命令行入口。
 //
 // 它同时是「本库能不能用」的最小证据与调参外壳：
 //   ico backends                 每个后端的可用性与具体原因
@@ -33,7 +33,7 @@
 #include <string>
 #include <vector>
 
-#include "ImageCodecOffload/image_codec_offload.h"
+#include "Image/Codec/Offload/image_codec_offload.h"
 #include "bmp_io.h"
 #include "cli_common.h"
 #include "image_codec_types.h"
@@ -57,7 +57,7 @@ int g_failures = 0;
 
 void printUsage() {
   std::printf(
-      "ico - ImageCodecOffload CLI\n"
+      "ico - Image.Codec.Offload CLI\n"
       "\n"
       "  ico backends\n"
       "  ico info <file>\n"

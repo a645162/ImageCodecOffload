@@ -1,0 +1,157 @@
+// File      : metrics.comp
+// Brief     : MSE / SSIM / MS-SSIM 的 Vulkan compute 着色器（单尺度累加）
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 并行形态：一个 invocation 负责一个 (像素, 通道)。
+//   * with_window == 0（只要 MSE/PSNR）：只做减法-平方，每像素 2 次读；
+//   * with_window != 0（SSIM / MS-SSIM）：在自己的 11x11 高斯窗上直接求和。
+//
+// 为什么不做「先可分离模糊成 5 张平面再合成」：那需要 5 张与图等大的 double
+// 平面（32000x19656 的图就是 25 GB 显存），而我们连整幅图都不需要上传——
+// 按行 band 上传即可。直方窗口的代价是每像素 2x121 次读，全部落在 L2 上，
+// 远低于一次大图往返。
+//
+// 累加量统一用 double：float 会让均值化的 SSIM 差到 1e-6 量级，只能靠放宽容差
+// 来「通过」对拍，那不是对齐。因此宿主侧必须启用 shaderFloat64，
+// 申请不到就明确失败（见 vk_codec_device.cpp），绝不悄悄退化成 float。
+//
+// 像素字节：缓冲按 uint 提交，按 (index >> 2) 取字、按 (index & 3) 取字节。
+// 小端序与宿主一致；Vulkan 存储缓冲没有「uint8 数组」这种类型，
+// 与其引入 GL_EXT_shader_8bit_storage（不是所有设备都有），不如自己拆字节。
+#version 450
+#extension GL_ARB_gpu_shader_fp64 : enable
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer ABuf { uint a_words[]; } buf_a;
+layout(set = 0, binding = 1) readonly buffer BBuf { uint b_words[]; } buf_b;
+layout(set = 0, binding = 2) readonly buffer WinBuf { double w[]; } win;
+layout(set = 0, binding = 3) writeonly buffer OutBuf { double partials[]; } acc;
+
+layout(push_constant) uniform Params {
+  int width;
+  int height;
+  int channels;
+  int y0;
+  int band_rows;
+  int halo;
+  int with_window;
+  uint groups;
+} pc;
+
+shared double s_ssim[256];
+shared double s_cs[256];
+shared double s_sq[256];
+
+double sampleA(uint index) {
+  const uint word = buf_a.a_words[index >> 2u];
+  return double((word >> ((index & 3u) * 8u)) & 0xFFu);
+}
+
+double sampleB(uint index) {
+  const uint word = buf_b.b_words[index >> 2u];
+  return double((word >> ((index & 3u) * 8u)) & 0xFFu);
+}
+
+void main() {
+  const uint lid = gl_LocalInvocationID.x;
+  const uint lsize = gl_WorkGroupSize.x;
+  const uint gid = gl_GlobalInvocationID.x;
+  const uint step = gl_NumWorkGroups.x * lsize;
+
+  const int top = pc.y0 - pc.halo;
+  const int tiles = pc.width * pc.channels;
+  const uint total = uint(pc.band_rows * tiles);
+
+  double local_ssim = 0.0;
+  double local_cs = 0.0;
+  double local_sq = 0.0;
+
+  for (uint index = gid; index < total; index += step) {
+    // 整图行号 gy 与 band 缓冲内的本地行号 ly 必须分开：缓冲第 0 行对应
+    // 整图 y0-halo 行（宿主按同一规则填充并复制边缘）。
+    const int gy = pc.y0 + int(index / uint(tiles));
+    const int rem = int(index % uint(tiles));
+    const int x = rem / pc.channels;
+    const int c = rem % pc.channels;
+
+    const int ly = gy - top;
+    const uint offset = uint((ly * pc.width + x) * pc.channels + c);
+
+    const double d = sampleA(offset) - sampleB(offset);
+    local_sq += d * d;
+
+    if (pc.with_window == 0) continue;
+
+    double sx = 0.0;
+    double sy = 0.0;
+    double sxx = 0.0;
+    double syy = 0.0;
+    double sxy = 0.0;
+
+    for (int dy = -pc.halo; dy <= pc.halo; ++dy) {
+      int cy = gy + dy;
+      cy = cy < 0 ? 0 : (cy >= pc.height ? pc.height - 1 : cy);
+      const int row = cy - top;
+      const double wy = win.w[dy + pc.halo];
+      const int row_base = row * pc.width * pc.channels;
+
+      for (int dx = -pc.halo; dx <= pc.halo; ++dx) {
+        int cx = x + dx;
+        cx = cx < 0 ? 0 : (cx >= pc.width ? pc.width - 1 : cx);
+
+        const uint o = uint(row_base + cx * pc.channels + c);
+        const double px = sampleA(o);
+        const double py = sampleB(o);
+        const double g = wy * win.w[dx + pc.halo];
+
+        sx += g * px;
+        sy += g * py;
+        sxx += g * px * px;
+        syy += g * py * py;
+        sxy += g * px * py;
+      }
+    }
+
+    const double kC1 = (0.01 * 255.0) * (0.01 * 255.0);
+    const double kC2 = (0.03 * 255.0) * (0.03 * 255.0);
+
+    const double vx = sxx - sx * sx;
+    const double vy = syy - sy * sy;
+    const double vxy = sxy - sx * sy;
+
+    const double lum = (2.0 * sx * sy + kC1) / (sx * sx + sy * sy + kC1);
+    const double den = vx + vy + kC2;
+    const double cs = den > 0.0 ? (2.0 * vxy + kC2) / den : 0.0;
+
+    local_cs += cs;
+    local_ssim += lum * cs;
+  }
+
+  // work-group 内归约（三份 double）。宿主固定 local size = 256，
+  // 与这里的数组尺寸一致；改一处必须改另一处。
+  s_ssim[lid] = local_ssim;
+  s_cs[lid] = local_cs;
+  s_sq[lid] = local_sq;
+  barrier();
+  memoryBarrierShared();
+
+  for (uint stride = lsize / 2u; stride > 0u; stride >>= 1u) {
+    if (lid < stride) {
+      s_ssim[lid] += s_ssim[lid + stride];
+      s_cs[lid] += s_cs[lid + stride];
+      s_sq[lid] += s_sq[lid + stride];
+    }
+    barrier();
+    memoryBarrierShared();
+  }
+
+  if (lid == 0u) {
+    const uint g = gl_WorkGroupID.x;
+    acc.partials[g] = s_ssim[0];
+    acc.partials[pc.groups + g] = s_cs[0];
+    acc.partials[2u * pc.groups + g] = s_sq[0];
+  }
+}

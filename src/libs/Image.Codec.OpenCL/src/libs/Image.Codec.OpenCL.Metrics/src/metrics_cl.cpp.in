@@ -1,0 +1,10 @@
+// Auto-generated from kernels/metrics.cl —— 请勿手改（由 CMake configure_file 生成）。
+namespace image_codec {
+namespace ocl {
+namespace metrics {
+const char* metrics_cl_source = R"KERNEL(
+@METRICS_CL_STRING@
+)KERNEL";
+}  // namespace metrics
+}  // namespace ocl
+}  // namespace image_codec

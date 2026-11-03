@@ -1,0 +1,58 @@
+// File      : jpeg_dequant_idct.comp
+// Brief     : JPEG 解码的「反量化 + 2D IDCT」着色器
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 每个 invocation 负责一个 8x8 块的**一个输出像素**（gid = 块号*64 + 像素号），
+// 与 OpenCL 版 dequant_idct 的映射完全一致——同一条公式、同一张基矩阵，
+// 三个后端才能解出同一组像素。
+//
+// 基矩阵 dct_mat 按 [系数][像素] 存放（dct_mat[k*64 + p]），宿主侧统一生成，
+// 编码的 FDCT 用的是同一张表的转置，两边不允许各算一份。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer CoeffBuf { float coeffs[]; } coeff_buf;
+layout(set = 0, binding = 1) readonly buffer QuantBuf { float qtable[]; } quant_buf;
+layout(set = 0, binding = 2) readonly buffer MatBuf { float dct_mat[]; } mat_buf;
+layout(set = 0, binding = 3) buffer PlaneBuf { float planes[]; } plane_buf;
+
+layout(push_constant) uniform Params {
+  int coeff_off;    // 该分量在组合系数缓冲里的起始 float 下标
+  int plane_off;    // 该分量在组合平面缓冲里的起始 float 下标
+  int plane_stride; // 平面行宽（= blocks_x * 8）
+  int block_stride; // 一行有多少个块（= blocks_x）
+  int blocks_total; // 该分量块数
+  int qtable_index; // 该分量用第几张量化表（0..3）
+} pc;
+
+void main() {
+  const uint total = uint(pc.blocks_total) * 64u;
+  const uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+
+  for (uint gid = gl_GlobalInvocationID.x; gid < total; gid += stride) {
+    const int bid = int(gid >> 6u);
+    const int p = int(gid & 63u);
+
+    // 反量化与 IDCT 合成一次点积：sum = Σ_k M[k][p] * c[k] * q[k]。
+    // precise：理由同 FDCT——禁止 FMA 合并，保证与 CPU 参考逐位一致。
+    precise float sum = 0.0;
+    for (int k = 0; k < 64; ++k) {
+      sum += mat_buf.dct_mat[k * 64 + p] *
+             coeff_buf.coeffs[pc.coeff_off + bid * 64 + k] *
+             quant_buf.qtable[pc.qtable_index * 64 + k];
+    }
+
+    // 解码端 IDCT 输出为 [-128,127] 电平，加 128 还原样本值。
+    int iv = int(floor(sum + 128.0 + 0.5));
+    iv = clamp(iv, 0, 255);
+
+    const int bx = p & 7;
+    const int by = p >> 3;
+    const int gx = (bid % pc.block_stride) * 8 + bx;
+    const int gy = (bid / pc.block_stride) * 8 + by;
+    plane_buf.planes[pc.plane_off + gy * pc.plane_stride + gx] = float(iv);
+  }
+}

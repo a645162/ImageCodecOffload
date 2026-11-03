@@ -1,0 +1,26 @@
+/*
+ * File: gradient_buffer.comp
+ * Brief: Gradient buffer.
+ * Author: Haomin Kong
+ * Email: a645162@163.com
+ * Created: 2026-08-12
+ */
+
+#version 450
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+// 打包 RGBA8（4 字节/像素）写满 W*H*4 字节的 buffer：GL 端按 W*H*4 直接 map 即得
+// 与预期一致的字节序（小端：byte0=r, byte1=g, byte2=b, byte3=a）。
+layout(std430, binding = 0) buffer Out { uint data[]; } outBuf;
+layout(push_constant) uniform PC { uint width; uint height; uint mode; } pc;
+
+void main() {
+  uint idx = gl_GlobalInvocationID.x;
+  if (idx >= pc.width * pc.height) return;
+  uint x = idx % pc.width;
+  uint y = idx / pc.width;
+  uint r = x * 255u / (pc.width - 1u);
+  uint g = y * 255u / (pc.height - 1u);
+  uint b = 128u;
+  if (((x / 8u) + (y / 8u)) % 2u == 0u) { r ^= 255u; g ^= 255u; }
+  outBuf.data[idx] = r | (g << 8u) | (b << 16u) | (255u << 24u);
+}

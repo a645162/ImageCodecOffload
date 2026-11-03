@@ -1,38 +1,43 @@
 <!--
  * File: README.md
- * Brief: ImageCodecOffload.
+ * Brief: Image.Codec.Offload.
  * Author: Haomin Kong
  * Email: a645162@163.com
  * Created: 2026-08-12
 -->
 
-# ImageCodecOffload
+# Image.Codec.Offload
 
-图像编解码卸载仓库（git submodule，内部为嵌套 submodule）。它既是各 GPU 后端的集合，
-也提供**主项目自己的路由层**：调用方说「压一张图」，由它挑后端、在失败时回退、并说清楚
-每一次回退的原因。
+图像编解码卸载仓库。它既是各 GPU 后端的集合，也提供**主项目自己的路由层**：
+调用方说「压一张图」，由它挑后端、在失败时回退、并说清楚每一次回退的原因。
+
+四个后端（CUDA / OpenCL / Vulkan / Platform.Intel）原本是 `libs/` 下的嵌套
+git submodule，现已**并入本仓库的源码树**（`src/libs/`）：同一个仓库、同一次提交、
+同一份版本，不再需要「指针对不齐」的三级提交。只有 `Image.Codec.Platform.Intel`
+内部的两个 Intel 第三方库（`3rdparty/libvpl`、`3rdparty/vpl-gpu-rt`）仍是 git
+submodule，首次克隆需 `git submodule update --init --recursive`。
 
 ```
 调用方（ImageViewer / 脚本 / 自己的程序）
-   │  C API: image_codec_offload_*（include/ImageCodecOffload/image_codec_offload.h）
+   │  C API: image_codec_offload_*（include/Image/Codec/Offload/image_codec_offload.h）
    ▼
-src/libs/ImageCodecOffload.Router   ← 后端选择 / 回退 / 记录原因
-   ├─ ImageCodecOffload.Cpu         ← libtiff / libpng / libjpeg-turbo（永远可用，也是像素级参照）
-   ├─ ImageCodecOffload.Router ──►  libs/ImageCodecCUDA   （nvJPEG / GPU LZW / GPU 行滤波）
-   ├─ ImageCodecOffload.Router ──►  libs/ImageCodecOpenCL （混合 JPEG / GPU LZW）
-   └─ ImageCodecOffload.Router ──►  libs/ImageCodecVulkan （混合 JPEG / TIFF 预测器 / PNG 行滤波 / 指标）
+src/libs/Image.Codec.Offload.Router   ← 后端选择 / 回退 / 记录原因
+   ├─ Image.Codec.Offload.Cpu         ← libtiff / libpng / libjpeg-turbo（永远可用，也是像素级参照）
+   ├─ Image.Codec.Offload.Router ──►  src/libs/Image.Codec.CUDA   （nvJPEG / GPU LZW / GPU 行滤波）
+   ├─ Image.Codec.Offload.Router ──►  src/libs/Image.Codec.OpenCL （混合 JPEG / GPU LZW）
+   └─ Image.Codec.Offload.Router ──►  src/libs/Image.Codec.Vulkan （混合 JPEG / TIFF 预测器 / PNG 行滤波 / 指标）
         ▲
-        └─ ImageCodecOffload.Core / .Common / .Api（类型、指标 CPU 参考、BMP 中转、C API）
+        └─ Image.Codec.Offload.Core / .Common / .Api（类型、指标 CPU 参考、BMP 中转、C API）
 ```
 
 ## 子项目
 
 | 子项目 | 用途 | C API 前缀 | 依赖 |
 |--------|------|-----------|------|
-| `ImageCodecCUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库；JP2/JXL 当前仅 GPU staging | `image_codec_cuda_*`（`<ImageCodecCUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
-| `ImageCodecOpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU）；JP2/JXL 当前仅 GPU staging | `image_codec_*`（`<OpenCLImageCodec/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
-| `ImageCodecPlatform` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | 构建期仅 oneVPL 头（`3rdparty/libvpl`）；运行期 `libvpl2` + `libmfx-gen1.2`（vpl-gpu-rt）+ `intel-media-va-driver`（Windows：Intel 显卡驱动自带 `libvpl.dll`/`libmfx-gen.dll`）。Linux / Windows 双平台，帧只走系统内存 |
-| `ImageCodecVulkan` | Vulkan compute 编解码：TIFF（容器 + LZW(CPU) + Predictor=2(GPU)）、PNG（行滤波 GPU + DEFLATE(CPU)）、baseline JPEG（Huffman/容器 CPU + DCT/颜色变换 GPU）、画质指标（fp64）；JP2/JXL 当前仅设备 staging；另含 Win32 external-memory → OpenGL 互操作（仅 Windows） | `image_codec_vulkan_*`（`<VulkanImageCodec/image_codec_vulkan.h>`） | Vulkan SDK / vcpkg `vulkan`；vcpkg `glslang` 库（构建期编译 shader） |
+| `Image.Codec.CUDA` | NVIDIA 后端：TIFF LZW 编码(GPU)、PNG 行滤波(GPU)、baseline JPEG 全 nvJPEG，以及 GPU 画质指标与调参库；JP2/JXL 当前仅 GPU staging | `image_codec_cuda_*`（`<Image/Codec/CUDA/image_codec_cuda.h>`） | CUDA Toolkit（nvJPEG）+ vcpkg `zlib` |
+| `Image.Codec.OpenCL` | OpenCL GPU 编解码：TIFF 容器 + LZW 编码(GPU)/解码(CPU)、PNG 行滤波(GPU) + zlib、baseline JPEG 混合编解码（Huffman CPU + DCT/颜色变换 GPU）；JP2/JXL 当前仅 GPU staging | `image_codec_*`（`<Image/Codec/OpenCL/image_codec.h>`） | 仅 OpenCL（vcpkg `opencl`） |
+| `Image.Codec.Platform.Intel` | 平台抽象（exe_dir / 单调时钟 / 休眠）+ Intel 媒体引擎（oneVPL，`libvpl.dll` / `libvpl.so.2` 运行期动态加载）：硬件 baseline JPEG 编解码、硬件单元探测，以及把硬件 JPEG 写成 TIFF（Compression=7 JPEG strips） | -（尚未接入 `ico` / 路由表） | 构建期仅 oneVPL 头（`3rdparty/libvpl`）；运行期 `libvpl2` + `libmfx-gen1.2`（vpl-gpu-rt）+ `intel-media-va-driver`（Windows：Intel 显卡驱动自带 `libvpl.dll`/`libmfx-gen.dll`）。Linux / Windows 双平台，帧只走系统内存 |
+| `Image.Codec.Vulkan` | Vulkan compute 编解码：TIFF（容器 + LZW(CPU) + Predictor=2(GPU)）、PNG（行滤波 GPU + DEFLATE(CPU)）、baseline JPEG（Huffman/容器 CPU + DCT/颜色变换 GPU）、画质指标（fp64）；JP2/JXL 当前仅设备 staging；另含 Win32 external-memory → OpenGL 互操作（仅 Windows） | `image_codec_vulkan_*`（`<Image/Codec/Vulkan/image_codec_vulkan.h>`） | Vulkan SDK / vcpkg `vulkan`；vcpkg `glslang` 库（构建期编译 shader） |
 
 ## 能力矩阵（现状）
 
@@ -122,10 +127,10 @@ backend: cpu  (fell back)
 
 - CPU 基线全程保留 1 通道；
 - CUDA 灰度 JPEG 走 `CSS_GRAY`（真 1 分量文件），灰度 TIFF/PNG 也保持 1 通道；
-- OpenCL 的 BMP 中转层（`OpenCL.Image.Codec.Common`）本身区分 8-bit 灰度与
+- OpenCL 的 BMP 中转层（`Image.Codec.OpenCL.Common`）本身区分 8-bit 灰度与
   24-bit RGB：灰度 TIFF 写 `spp=1` + `Photometric=BlackIsZero`，灰度 JPEG 走
   `gray_to_y` 并强制 4:4:4（没有色度可下采样），灰度 PNG 按 1 通道行滤波；
-- 路由层仍然先用 `ImageCodecOffload.Cpu` 的容器头探测（`probeChannels`）问出
+- 路由层仍然先用 `Image.Codec.Offload.Cpu` 的容器头探测（`probeChannels`）问出
   「这张图本来几通道」，与后端能表示的通道数不匹配就明确返回
   `unsupported-format`，交给下一个后端。允许「做不到」，不允许「做到了但改变了语义」。
 
@@ -175,7 +180,7 @@ CPU 表达，GPU lane 会被能力表挡掉而不是「照收但忽略」——�
 
 格式目录还同时提供不随机器变化的两层尺寸边界。JPEG 2000 与 JPEG XL 的公开
 容器/库尺寸字段为无符号 32 位，因此目录显示的理论宽度、高度均为
-`4,294,967,295`。但 ImageCodecOffload 的公共 `Image` 几何字段是有符号 `int`，
+`4,294,967,295`。但 Image.Codec.Offload 的公共 `Image` 几何字段是有符号 `int`，
 实际可表示的单边上限为 `2,147,483,647`；UI 必须将其显示为“本库实现边界”，
 不能把 32 位容器字段误说成当前实现可直接处理的尺寸。这两层都是格式/API
 范围，不代表可分配的图像大小。
@@ -237,12 +242,12 @@ cmake --build build -j
 | --- | --- | --- |
 | `IMAGECODEC_OFFLOAD_WITH_OPENCL` | `ON` | 构建 OpenCL 后端 |
 | `IMAGECODEC_OFFLOAD_WITH_CUDA` | `OFF` | 构建 CUDA 后端（顶层会在 `project()` 前探测 `nvcc`） |
-| `IMAGECODEC_OFFLOAD_WITH_PLATFORM` | `OFF` | 构建 `ImageCodecPlatform`（平台抽象 + Intel oneVPL 硬件 JPEG / TIFF JPEG strips）。**只加库，不动路由后端表与 `ico`** |
+| `IMAGECODEC_OFFLOAD_WITH_PLATFORM` | `OFF` | 构建 `Image.Codec.Platform.Intel`（平台抽象 + Intel oneVPL 硬件 JPEG / TIFF JPEG strips）。**只加库，不动路由后端表与 `ico`** |
 | `IMAGECODEC_OFFLOAD_WITH_VULKAN` | `OFF` | 构建 Vulkan 后端（JPEG/TIFF/PNG + 指标）。需要 GLSL 编译器（`glslc` 或 `glslangValidator`） |
 | `IMAGECODEC_OFFLOAD_BUILD_CLI` | `ON` | 构建 `ico` |
 | `IMAGECODEC_OFFLOAD_BUILD_TESTS` | `OFF` | 构建并注册 ctest（`ico_test` + 各子项目测试） |
 
-### `ImageCodecPlatform` 的依赖（`_WITH_PLATFORM=ON` 时才相关）
+### `Image.Codec.Platform.Intel` 的依赖（`_WITH_PLATFORM=ON` 时才相关）
 
 构建期只需要 **oneVPL 头**（submodule，不链接、不需要 SDK 安装包）：
 
@@ -262,7 +267,7 @@ git submodule update --init --recursive   # 3rdparty/libvpl（头）、3rdparty/
 两者缺失时对应自测项 SKIP，不影响库构建。
 
 明确不需要：D3D11/DXGI、OpenCL/CUDA 运行库、X server（纯计算，可无显示器）、root 权限。
-依赖细节与实测环境见 `libs/ImageCodecPlatform/README.md` 的「依赖清单」。
+依赖细节与实测环境见 `src/libs/Image.Codec.Platform.Intel/README.md` 的「依赖清单」。
 
 ## CLI `ico`
 
@@ -333,16 +338,16 @@ CPU 指标的 11×11 窗按 band 并行计算、**累加顺序保持不变**，�
 
 ## 约束
 
-- `ImageCodecOpenCL` **不引用** `ImageCodecPlatform`（纯 OpenCL，自包含）。
-- `ImageCodecPlatform` 仅承载平台抽象与厂商/Intel 专用后端，供上层按需接入。
+- `Image.Codec.OpenCL` **不引用** `Image.Codec.Platform.Intel`（纯 OpenCL，自包含）。
+- `Image.Codec.Platform.Intel` 仅承载平台抽象与厂商/Intel 专用后端，供上层按需接入。
   它目前**没有**接进路由后端表：`ico backends` 里看不到它，打开
-  `IMAGECODEC_OFFLOAD_WITH_PLATFORM` 只多编译出库（`OpenCLImageCodec::Jpeg::oneVPL`、
-  `OpenCLImageCodec::Tiff`）与自测 CLI（子项目的 `OIC_BUILD_CLI`，父项目内默认关闭）。
+  `IMAGECODEC_OFFLOAD_WITH_PLATFORM` 只多编译出库（`Image.Codec.OpenCL::Jpeg::oneVPL`、
+  `Image.Codec.OpenCL::Tiff`）与自测 CLI（子项目的 `OIC_BUILD_CLI`，父项目内默认关闭）。
 - Intel 硬件 JPEG **不是**「TIFF 也有硬件单元」：TIFF 侧只有容器，压缩走
   「硬件 JPEG strips（Compression=7）」。TIFF 容器由本仓库自写（IFD / JPEGTables），
   libtiff 只用于测试端解码校验——它写 JPEG 会重新编码 strip，没有入口接收已编好的码流。
-- `ImageCodecVulkan` 可通过 `add_subdirectory` 被上层复用；编解码走
-  `VulkanImageCodec::CodecApi`（平台无关），GL 互操作走 `VulkanImageCodec::Api`
+- `Image.Codec.Vulkan` 可通过 `add_subdirectory` 被上层复用；编解码走
+  `Image.Codec.Vulkan::CodecApi`（平台无关），GL 互操作走 `Image.Codec.Vulkan::Api`
   （仅 Windows），不要复制其 Win32 handle/GL 导入实现。
 - Vulkan 着色器在 configure 阶段编译成 SPIR-V 再嵌入头文件（`cmake/spv_to_header.cmake`），
   `.spv` 是构建产物、不提交进仓库；**新增着色器必须重新 configure**。
@@ -360,9 +365,9 @@ CPU 指标的 11×11 窗按 band 并行计算、**累加顺序保持不变**，�
     所以 CPU 自身在任意线程数下逐位一致。
 - 子项目的 CMake 用 `PROJECT_SOURCE_DIR` 定位自己的 `include/`：
   它们会被 `add_subdirectory` 复用，`CMAKE_SOURCE_DIR` 会指向父工程根目录。
-- `ImageCodecOpenCL` 的 CL 头声明面固定为 **OpenCL 1.2**
-  （`CL_TARGET_OPENCL_VERSION=120`，由 `OpenCL.Image.Codec.Core` 以 `PUBLIC` 传出，
-  所有 `OpenCL.Image.Codec.*` 与路由层的 OpenCL TU 一起继承）：
+- `Image.Codec.OpenCL` 的 CL 头声明面固定为 **OpenCL 1.2**
+  （`CL_TARGET_OPENCL_VERSION=120`，由 `Image.Codec.OpenCL.Core` 以 `PUBLIC` 传出，
+  所有 `Image.Codec.OpenCL.*` 与路由层的 OpenCL TU 一起继承）：
   它的全部 kernel 都以 `-cl-std=CL1.2` 构建，host 侧也只用 1.x 入口。
   **不要**把它抬到 300——AMD 的 GPU 运行时最高只声称 2.0/2.1、根本不导出 3.0 入口，
   声明面放到 3.0 会让 `clCreateBufferWithProperties` /
@@ -373,32 +378,36 @@ CPU 指标的 11×11 窗按 band 并行计算、**累加顺序保持不变**，�
 ## 目录结构
 
 ```
-CMakeLists.txt                     # 后端开关、CPU 基线依赖、子项目挂载
-include/ImageCodecOffload/         # 对外 C API（ico_*）
+CMakeLists.txt                     # 后端开关、CPU 基线依赖、后端挂载
+include/Image/Codec/Offload/       # 对外 C API（ico_*）
 src/
 ├── cli/                           # ico
-└── libs/
-    ├── ImageCodecOffload.Core/     # 类型 / 错误 / 指标 CPU 参考 / ICodecBackend
-    ├── ImageCodecOffload.Common/   # BMP 读写 + probeBmp
-    ├── ImageCodecOffload.Cpu/      # libtiff / libpng / libjpeg-turbo + 容器通道探测
-    ├── ImageCodecOffload.Router/   # OpenCL / CUDA 适配 + 回退
-    └── ImageCodecOffload.Api/      # C API 实现
-libs/                              # 子项目（git submodule）
+└── libs/                          # 全部实现：后端 + 路由层同仓同版本
+    ├── Image.Codec.Offload.Core/     # 类型 / 错误 / 指标 CPU 参考 / ICodecBackend
+    ├── Image.Codec.Offload.Common/   # BMP 读写 + probeBmp
+    ├── Image.Codec.Offload.Cpu/      # libtiff / libpng / libjpeg-turbo + 容器通道探测
+    ├── Image.Codec.Offload.Router/   # 后端选择 / 回退 / OpenCL·CUDA·Vulkan 适配
+    ├── Image.Codec.Offload.Api/      # C API 实现
+    ├── Image.Codec.CUDA/             # NVIDIA 后端（每个后端内部再按 src/libs/<目标> 分层）
+    ├── Image.Codec.OpenCL/
+    ├── Image.Codec.Vulkan/
+    └── Image.Codec.Platform.Intel/   # Intel oneVPL 硬件路径
+        └── 3rdparty/                 # libvpl / vpl-gpu-rt（仅这两处仍是 git submodule）
 tests/                             # ico_test
 docs/                              # plan / report / 本文件
 ```
 
-## 三级提交约定
+## 提交约定
 
-1. **子项目**（`ImageCodecCUDA` / `ImageCodecOpenCL` / `ImageCodecPlatform` / `ImageCodecVulkan`）：
-   先在各自仓库内提交代码改动（含其内部 `docs/`）。
-2. **父仓库** `ImageCodecOffload`：`git add libs/<子项目> docs` 后提交——更新子项目指针；
-   同步更新本文件与 `docs/plan/`、`docs/report/`。
-3. **主项目** `ImageViewerQt`：`git add libs/ImageCodecOffload` 提交，更新父仓库指针；
-   并同步更新 `AGENTS.md` 的 ImageCodecOffload 说明与 `docs/.docs/libs/` 下的 About 文档。
+1. **本仓库** `Image.Codec.Offload`：后端与路由层的改动在同一次提交里（它们本来就是
+   同一个仓库），同步更新本文件与 `docs/plan/`、`docs/report/`。
+2. **主项目** `ImageViewerQt`：`git add libs/ImageCodecOffload` 提交，更新子模块指针；
+   并同步更新其 `AGENTS.md` 的说明与 `docs/.docs/libs/libs/submodules/ImageCodecOffload.*.md`。
+3. 只有改到 `Image.Codec.Platform.Intel/3rdparty/*` 时才需要关心 Intel 那两个 submodule
+   指针，且**不应**随手更新——它们是 Intel 的上游代码。
 
 ## 文档
 
 - `docs/plan/`：实施计划
 - `docs/report/`：研究报告与实测数据
-- `libs/ImageCodecCUDA/docs/`：CUDA 后端的架构、指标定义与调参说明
+- `src/libs/Image.Codec.CUDA/docs/`：CUDA 后端的架构、指标定义与调参说明

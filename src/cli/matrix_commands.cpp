@@ -31,7 +31,7 @@
 #include <system_error>
 #include <vector>
 
-#include "ImageCodecOffload/image_codec_offload.h"
+#include "Image/Codec/Offload/image_codec_offload.h"
 #include "cli_common.h"
 #include "image_codec_types.h"
 #include "metrics.h"

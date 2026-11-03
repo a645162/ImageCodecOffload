@@ -1,0 +1,6 @@
+[submodule "3rdparty/vpl-gpu-rt"]
+	path = 3rdparty/vpl-gpu-rt
+	url = https://github.com/intel/vpl-gpu-rt
+[submodule "3rdparty/libvpl"]
+	path = 3rdparty/libvpl
+	url = https://github.com/intel/libvpl

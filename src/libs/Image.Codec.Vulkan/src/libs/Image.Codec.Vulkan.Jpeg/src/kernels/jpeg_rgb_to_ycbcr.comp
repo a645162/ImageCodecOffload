@@ -1,0 +1,68 @@
+// File      : jpeg_rgb_to_ycbcr.comp
+// Brief     : JPEG 编码的「RGB -> YCbCr」着色器（全分辨率平面，边缘复制补齐）
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 输出三张全分辨率平面（含块补齐）。色度是否下采样由后面的 downsample 决定，
+// 这里保持全分辨率是为了让 4:4:4 与 4:2:0/4:2:2 共用同一条路径。
+//
+// 为什么用整数定点而不是浮点 BT.601（libjpeg jccolor.c 的 16 位系数）：
+// 浮点写法在 GPU 上会被驱动的 FMA 合并成另一种累加顺序，与同仓库的 CPU 参考
+// 差 1 个 ulp。1 个 ulp 单独看无害，但下游 downsample 的 (a+b+c+d+2)>>2 正好
+// 把「恰好落在 .5 边界」的样本翻到另一边，于是 Cb 平面出现 ±1 的差异，再经
+// DCT 放大成两套不同的量化系数——「同一张图两个实现」就不成立了。整数运算
+// 在任何设备上都精确、可复现，也让本后端与 libjpeg 的取整规则一致。
+//
+// 偏置常量 8421376 = 128.5 * 65536，把 Cb/Cr 抬到非负区间，于是 >> 16 只是在
+// 非负数上做算术移位，不依赖「有符号右移是否符号扩展」这种实现自由度。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer SrcBuf { uint words[]; } src;
+layout(set = 0, binding = 1) buffer YBuf { float plane[]; } y_plane;
+layout(set = 0, binding = 2) buffer CbBuf { float plane[]; } cb_plane;
+layout(set = 0, binding = 3) buffer CrBuf { float plane[]; } cr_plane;
+
+layout(push_constant) uniform Params {
+  int src_stride;   // 输入每行字节数 = width * 3
+  int plane_stride; // 输出平面行宽（含补齐）= mcus_x * max_h * 8
+  int width;
+  int height;
+  int plane_w;
+  int plane_h;
+} pc;
+
+uint readByte(int index) {
+  const uint word = src.words[uint(index) >> 2u];
+  return (word >> (uint(index) & 3u) * 8u) & 0xFFu;
+}
+
+void main() {
+  const uint total = uint(pc.plane_w) * uint(pc.plane_h);
+  const uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+
+  for (uint gid = gl_GlobalInvocationID.x; gid < total; gid += stride) {
+    const int x = int(gid % uint(pc.plane_w));
+    const int y = int(gid / uint(pc.plane_w));
+    const int rx = x < pc.width ? x : pc.width - 1;
+    const int ry = y < pc.height ? y : pc.height - 1;
+    const int idx = ry * pc.src_stride + rx * 3;
+
+    const int r = int(readByte(idx));
+    const int g = int(readByte(idx + 1));
+    const int b = int(readByte(idx + 2));
+
+    // libjpeg FIX(0.299)/FIX(0.587)/FIX(0.114) 等 16 位定点系数。
+    const int yy = (19595 * r + 38470 * g + 7471 * b + 32768) >> 16;
+    const int cb = (-11059 * r - 21709 * g + 32768 * b + 8421376) >> 16;
+    const int cr = (32768 * r - 27439 * g - 5329 * b + 8421376) >> 16;
+
+    const int o = y * pc.plane_stride + x;
+    // 亚采样平面保持 float 存放（DCT 着色器按 float 读），但值本身是精确整数。
+    y_plane.plane[o] = float(yy);
+    cb_plane.plane[o] = float(cb);
+    cr_plane.plane[o] = float(cr);
+  }
+}

@@ -1,0 +1,65 @@
+// File      : jpeg_fdct_quantize.comp
+// Brief     : JPEG 编码的「2D FDCT + 量化」着色器
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 每个 invocation 负责一个 8x8 块的一个输出系数，与 OpenCL 版 fdct_quantize
+// 映射一致。基矩阵与解码共用同一张表（dct_mat[p*64 + k]），只是索引方向相反。
+//
+// 像素先减 128（电平平移），这是 JPEG 的基线定义，不是可选的优化。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer PlaneBuf { float plane[]; } plane_buf;
+layout(set = 0, binding = 1) readonly buffer QuantBuf { float qtable[]; } quant_buf;
+layout(set = 0, binding = 2) readonly buffer MatBuf { float dct_mat[]; } mat_buf;
+layout(set = 0, binding = 3) buffer CoeffBuf { float coeffs[]; } coeff_buf;
+
+layout(push_constant) uniform Params {
+  int plane_stride;
+  int qtable_index;
+  int coeff_off;    // 该分量在组合系数缓冲里的起始 float 下标
+  int block_stride; // 一行有多少个块（= blocks_x）
+  int blocks_total;
+} pc;
+
+void main() {
+  const uint total = uint(pc.blocks_total) * 64u;
+  const uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+
+  for (uint gid = gl_GlobalInvocationID.x; gid < total; gid += stride) {
+    const int bid = int(gid >> 6u);
+    const int p = int(gid & 63u);
+
+    const int bx = p & 7;
+    const int by = p >> 3;
+    const int block_x = (bid % pc.block_stride) * 8;
+    const int block_y = (bid / pc.block_stride) * 8;
+
+    // precise：禁止驱动把 mat*x 与累加合并成 FMA。合并后的每一位差异都会被
+    // 量化（floor(sum/qv + 0.5)）放大成「这份实现量化成 5、那份量化成 4」，
+    // 于是 GPU 与本后端的 CPU 参考对同一张图给出不同的量化系数。
+    // CPU 侧对应的约束是 jpeg_dct_cpu.cpp 的 -ffp-contract=off。
+    precise float sum = 0.0;
+    for (int k = 0; k < 64; ++k) {
+      const int lx = k & 7;
+      const int ly = k >> 3;
+      const float f =
+          plane_buf.plane[(block_y + ly) * pc.plane_stride + (block_x + lx)] -
+          128.0;
+      sum += mat_buf.dct_mat[p * 64 + k] * f;
+    }
+
+    float qv = quant_buf.qtable[pc.qtable_index * 64 + p];
+    if (qv < 1.0) qv = 1.0;
+    // +1e-3 是「平局偏置」：DCT 的真实值经常精确落在 n+0.5 上（例如 DC 就是
+    // 块内均值，量化步长为 3 时每 12 个码值就撞一次），此时两个实现各自最后一位
+    // 的差异会决定 20 还是 21。偏置比任何合理的浮点误差都大、又远小于半个量化
+    // 步长，于是「精确平局」在任何设备上都同向取整，同一张图在任何 GPU 上编出
+    // 同一份 JPEG。CPU 参考用同一个常量（jpeg_dct_cpu.cpp）。
+    const int qi = int(floor(sum / qv + 0.5 + 1.0e-3));
+    coeff_buf.coeffs[pc.coeff_off + bid * 64 + p] = float(qi);
+  }
+}

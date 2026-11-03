@@ -1,17 +1,19 @@
 <!--
  * File: README.md
- * Brief: ImageCodecOffload.
+ * Brief: Image.Codec.Offload.
  * Author: Haomin Kong
  * Email: a645162@163.com
  * Created: 2026-08-12
 -->
 
-# ImageCodecOffload
+# Image.Codec.Offload
 
-大图（GB 级 BMP/TIFF/PNG）图像编解码卸载仓库：三个 GPU 后端（CUDA / OpenCL / Vulkan）
-加上一个**路由层**，调用方只需说「压这张图」，由路由层选后端、失败时回退，并给出每一次
-回退的原因。CPU 基线（libtiff / libpng / libjpeg-turbo）永远可用，同时充当 GPU 后端的
-像素级参照。
+大图（GB 级 BMP/TIFF/PNG）图像编解码卸载仓库：四个后端（CUDA / OpenCL / Vulkan /
+Intel oneVPL）加上一个**路由层**，调用方只需说「压这张图」，由路由层选后端、失败时回退，
+并给出每一次回退的原因。CPU 基线（libtiff / libpng / libjpeg-turbo）永远可用，同时充当
+GPU 后端的像素级参照。
+
+后端不再是嵌套子模块：它们与路由层一起放在 `src/libs/` 下，同一次提交、同一份版本。
 
 ## 快速开始
 
@@ -32,13 +34,13 @@ CUDA 后端加 `-DIMAGECODEC_OFFLOAD_WITH_CUDA=ON`（需要 CUDA Toolkit / nvJPE
 
 | 部分 | 说明 |
 | --- | --- |
-| `include/ImageCodecOffload/` | 对外 C API `image_codec_offload_*` |
-| `src/libs/ImageCodecOffload.*` | 路由层：Core（类型/指标 CPU 参考）、Common（BMP）、Cpu（基线）、Router（选择与回退）、Api |
+| `include/Image/Codec/Offload/` | 对外 C API `image_codec_offload_*` |
+| `src/libs/Image.Codec.Offload.*` | 路由层：Core（类型/指标 CPU 参考）、Common（BMP）、Cpu（基线）、Router（选择与回退）、Api |
 | `src/cli/` | `ico`：backends / info / encode / decode / compare |
-| `libs/ImageCodecCUDA` | NVIDIA 后端：nvJPEG、GPU LZW、GPU 行滤波、GPU 指标、调参库 |
-| `libs/ImageCodecOpenCL` | OpenCL 后端：混合 JPEG、GPU LZW |
-| `libs/ImageCodecPlatform` | 平台抽象与 Intel oneVPL 硬件后端 |
-| `libs/ImageCodecVulkan` | Vulkan compute 与 GL 互操作（尚无编解码实现，暂不参与路由） |
+| `src/libs/Image.Codec.CUDA` | NVIDIA 后端：nvJPEG、GPU LZW、GPU 行滤波、GPU 指标、调参库 |
+| `src/libs/Image.Codec.OpenCL` | OpenCL 后端：混合 JPEG、GPU LZW |
+| `src/libs/Image.Codec.Platform.Intel` | 平台抽象与 Intel oneVPL 硬件后端 |
+| `src/libs/Image.Codec.Vulkan` | Vulkan compute 编解码：TIFF（Predictor=2）、PNG 行滤波、baseline JPEG、画质指标 |
 | `tests/` | 端到端测试：往返、指标 golden、三后端对拍、灰度保真、回退原因 |
 
 ## 设计要点

@@ -1,0 +1,24 @@
+# File: src/libs/Image.Codec.Offload.Core/CMakeLists.txt
+# Brief: CMake build configuration.
+# Author: Haomin Kong
+# Email: a645162@163.com
+# Created: 2026-10-31
+
+add_library(Image.Codec.Offload.Core STATIC
+  src/image_codec_types.h
+  src/image_codec_types.cpp
+  src/metrics.h
+  src/metrics.cpp
+  src/backend.h)
+
+# 指标参考实现用 std::thread / std::barrier 做「样本值并行、累加顺序不变」的
+# 加速；Windows 的 MSVC 不需要额外链接，Linux/Unix 走 Threads::Threads。
+find_package(Threads REQUIRED)
+target_link_libraries(Image.Codec.Offload.Core PUBLIC Threads::Threads)
+
+target_include_directories(Image.Codec.Offload.Core PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+# Core 是纯 C++：不依赖 Qt、不依赖任何 GPU SDK、不链接 libtiff/libpng。
+# 这条约束保证「后端接口 + 指标 CPU 参考」可以单独被 SDK 与测试使用。
+add_library(Image.Codec.Offload::Core ALIAS Image.Codec.Offload.Core)

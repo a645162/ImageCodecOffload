@@ -1,0 +1,14 @@
+// 由 CMake configure_file 生成：把 kernels/jpeg_dec.cl 与 kernels/jpeg_enc.cl 嵌入为 C 字符串。
+#include "jpeg_dct_ocl.h"
+
+namespace image_codec {
+namespace jpeg {
+
+const char kJpegDecSource[] =
+R"JPEGCL(@JPEG_DEC_SOURCE@)JPEGCL";
+
+const char kJpegEncSource[] =
+R"JPEGCL(@JPEG_ENC_SOURCE@)JPEGCL";
+
+}  // namespace jpeg
+}  // namespace image_codec

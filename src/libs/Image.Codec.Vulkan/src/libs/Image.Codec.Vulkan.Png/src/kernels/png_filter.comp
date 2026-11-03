@@ -1,0 +1,156 @@
+// File      : png_filter.comp
+// Brief     : PNG 行滤波（自适应选择 + 滤波计算）的 Vulkan compute 着色器
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 两种模式（push constant mode）：
+//   * mode == 0：打分。一个 work-group 负责 (行, 滤波类型) 的一个组合，
+//     work-group 内树形归约得到 Σ|signed(filtered)|，写入 scores[row*5+f]；
+//   * mode == 1：应用。一个 invocation 负责输出 4 个字节（一个 uint 字），
+//     按 row 取分数最小的滤波类型后算出 filtered 值。
+//
+// 为什么打分与计算要分两次派发：滤波类型必须在整行都算完之后才能定，
+// 而「算完」是一个归约。合并成一次派发就得在着色器里做跨 work-group 同步
+// （GLSL 没有），只能拆开。
+//
+// 字节访问：存储缓冲按 uint 提交，按 (index >> 2) 取字、按 (index & 3) 取字节。
+// 输出按「一个字 4 字节」整体写入，避免两个 invocation 对同一个字做
+// read-modify-write 的竞争（行宽不是 4 的倍数时，尾部字节一定跨界）。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer SrcBuf { uint src_words[]; } src;
+// 可读写：应用阶段按整字写入，不需要读；声明成可读写是为了将来加
+// 「同一块缓冲复用」时不用改布局。
+layout(set = 0, binding = 1) buffer DstBuf { uint dst_words[]; } dst;
+layout(set = 0, binding = 2) buffer ScoreBuf { uint scores[]; } score;
+
+layout(push_constant) uniform Params {
+  int row_bytes;    // 一行原始样本字节数 = width * channels
+  int channels;     // bpp（8-bit 样本，bpp == channels）
+  int band_rows;    // 本 band 需要输出的行数
+  int fixed_filter; // -1 = 自适应；0..4 = 固定
+  int mode;         // 0 = 打分，1 = 应用
+  int pad0;
+  int pad1;
+  int pad2;
+} pc;
+
+shared uint s_abs[256];
+
+uint readByte(uint index) {
+  const uint word = src.src_words[index >> 2u];
+  return (word >> ((index & 3u) * 8u)) & 0xFFu;
+}
+
+// 带符号字节的绝对值：滤波输出是 uint8，按 int8 解释后取绝对值
+// （PNG 规范与 libpng 的自适应启发式都用这个量）。
+uint absSigned(uint value) {
+  const int v = int(value);
+  const int sv = v >= 128 ? v - 256 : v;
+  return uint(sv < 0 ? -sv : sv);
+}
+
+int paeth(int a, int b, int c) {
+  const int p = a + b - c;
+  const int pa = abs(p - a);
+  const int pb = abs(p - b);
+  const int pc2 = abs(p - c);
+  if (pa <= pb && pa <= pc2) return a;
+  if (pb <= pc2) return b;
+  return c;
+}
+
+// 一行的滤波值。row 是 band 内的目标行（band 第 0 行是上一行）。
+uint filterByte(int filter_type, int row, int col) {
+  const int bpp = pc.channels;
+  const int row_bytes = pc.row_bytes;
+
+  const int cur = (row + 1) * row_bytes + col;
+  const int up = row * row_bytes + col;
+  const int left_off = col >= bpp ? bpp : 0;
+  const int left = col >= bpp ? int(readByte(uint(cur - left_off))) : 0;
+  const int above = int(readByte(uint(up)));
+  const int upper_left = col >= bpp ? int(readByte(uint(up - left_off))) : 0;
+  const int value = int(readByte(uint(cur)));
+
+  int predictor = 0;
+  if (filter_type == 1) {
+    predictor = left;
+  } else if (filter_type == 2) {
+    predictor = above;
+  } else if (filter_type == 3) {
+    predictor = (left + above) >> 1;
+  } else if (filter_type == 4) {
+    predictor = paeth(left, above, upper_left);
+  }
+  return uint((value - predictor) & 0xFF);
+}
+
+void main() {
+  const uint lid = gl_LocalInvocationID.x;
+  const uint lsize = gl_WorkGroupSize.x;
+  const uint gid = gl_GlobalInvocationID.x;
+
+  if (pc.mode == 0) {
+    // ---- 打分：work-group = (row, filter) ----
+    const uint group = gl_WorkGroupID.x;
+    const int row = int(group / 5u);
+    const int filter_type = int(group % 5u);
+    if (row >= pc.band_rows) return;
+
+    const int row_bytes = pc.row_bytes;
+    uint sum = 0;
+    for (int col = int(lid); col < row_bytes; col += int(lsize)) {
+      sum += absSigned(filterByte(filter_type, row, col));
+    }
+
+    s_abs[lid] = sum;
+    barrier();
+    for (uint stride = lsize / 2u; stride > 0u; stride >>= 1u) {
+      if (lid < stride) s_abs[lid] += s_abs[lid + stride];
+      barrier();
+    }
+    if (lid == 0u) score.scores[row * 5 + filter_type] = s_abs[0];
+    return;
+  }
+
+  // ---- 应用：一个 invocation 一个 uint 字（4 字节）----
+  const int row_bytes = pc.row_bytes;
+  const uint total_bytes = uint(pc.band_rows * row_bytes);
+  const uint total_words = (total_bytes + 3u) / 4u;
+
+  for (uint word = gid; word < total_words; word += gl_NumWorkGroups.x * lsize) {
+    const uint base = word * 4u;
+    uint packed = 0u;
+
+    for (uint k = 0u; k < 4u; ++k) {
+      const uint pos = base + k;
+      if (pos >= total_bytes) break;
+
+      const int row = int(pos / uint(row_bytes));
+      const int col = int(pos % uint(row_bytes));
+
+      int filter_type = pc.fixed_filter;
+      if (filter_type < 0) {
+        // 与宿主侧 chooseAdaptiveFilters() 同一条规则：严格小于，
+        // 平局取下标更小的滤波类型。
+        uint best = 0xFFFFFFFFu;
+        filter_type = 0;
+        for (int f = 0; f < 5; ++f) {
+          const uint v = score.scores[row * 5 + f];
+          if (v < best) {
+            best = v;
+            filter_type = f;
+          }
+        }
+      }
+
+      packed |= filterByte(filter_type, row, col) << (k * 8u);
+    }
+
+    dst.dst_words[word] = packed;
+  }
+}

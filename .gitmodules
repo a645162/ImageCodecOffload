@@ -1,12 +1,6 @@
-[submodule "libs/ImageCodecOpenCL"]
-	path = libs/ImageCodecOpenCL
-	url = https://github.com/a645162/ImageCodecOpenCL.git
-[submodule "libs/ImageCodecCUDA"]
-	path = libs/ImageCodecCUDA
-	url = https://github.com/a645162/ImageCodecCUDA.git
-[submodule "libs/ImageCodecVulkan"]
-	path = libs/ImageCodecVulkan
-	url = https://github.com/a645162/ImageCodecVulkan.git
-[submodule "libs/ImageCodecPlatform"]
-	path = libs/ImageCodecPlatform
-	url = https://github.com/a645162/ImageCodecPlatform.git
+[submodule "src/libs/Image.Codec.Platform.Intel/3rdparty/libvpl"]
+	path = src/libs/Image.Codec.Platform.Intel/3rdparty/libvpl
+	url = https://github.com/intel/libvpl
+[submodule "src/libs/Image.Codec.Platform.Intel/3rdparty/vpl-gpu-rt"]
+	path = src/libs/Image.Codec.Platform.Intel/3rdparty/vpl-gpu-rt
+	url = https://github.com/intel/vpl-gpu-rt

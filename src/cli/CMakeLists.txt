@@ -10,11 +10,11 @@ add_executable(ico
   matrix_commands.cpp)
 
 target_link_libraries(ico PRIVATE
-  ImageCodecOffload.Api
-  ImageCodecOffload.Common)
+  Image.Codec.Offload.Api
+  Image.Codec.Offload.Common)
 
 # CLI 需要拿到内部接口（Router 的强制后端入口与 backendName）：这些不属于
 # 对外 C API，故意不放进 include/ 的公共头里。
 target_include_directories(ico PRIVATE
-  "${PROJECT_SOURCE_DIR}/src/libs/ImageCodecOffload.Router/src"
-  "${PROJECT_SOURCE_DIR}/src/libs/ImageCodecOffload.Core/src")
+  "${PROJECT_SOURCE_DIR}/src/libs/Image.Codec.Offload.Router/src"
+  "${PROJECT_SOURCE_DIR}/src/libs/Image.Codec.Offload.Core/src")

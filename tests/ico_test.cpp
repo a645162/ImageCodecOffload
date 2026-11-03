@@ -25,7 +25,7 @@
 #include <thread>
 #include <vector>
 
-#include <ImageCodecOffload/image_codec_offload.h>
+#include <Image/Codec/Offload/image_codec_offload.h>
 
 #include <algorithm>
 
@@ -691,7 +691,7 @@ void testGpuHybridNewFormatRoundtrip() {
 }
 
 // 确定性图案（纯渐变会让压缩缺陷被掩盖；这里要的是有局部随机性）。
-// 与 ImageCodecCUDA / ImageCodecOpenCL 的同名测试逐字相同：三个后端必须在
+// 与 Image.Codec.CUDA / Image.Codec.OpenCL 的同名测试逐字相同：三个后端必须在
 // 同一张图上给出同一组数字。
 Image makeImage(int w, int h, int c) {
   Image img;

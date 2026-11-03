@@ -1,0 +1,57 @@
+// File      : tiff_predict.comp
+// Brief     : TIFF Predictor=2（水平差分）的 Vulkan compute 着色器
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// TIFF 的 Predictor=2 是**逐行**差分：d[i] = s[i] - s[i-channels]（模 256），
+// 行首 channels 个样本的左邻视为 0。因为不跨行，一个 band 内的每一行都可以
+// 独立并行——这是 TIFF 里唯一适合 GPU 的阶段。
+//
+// LZW 本身（字典构建）是严格串行的，留在 CPU：见 tiff_codec.cpp 的说明。
+//
+// 输出按 uint 字整体写入：一个 invocation 负责 4 个字节，避免两个 invocation
+// 对同一个字做 read-modify-write（行宽不是 4 的倍数时尾部一定跨界）。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer SrcBuf { uint src_words[]; } src;
+layout(set = 0, binding = 1) buffer DstBuf { uint dst_words[]; } dst;
+
+layout(push_constant) uniform Params {
+  int row_bytes;  // width * channels
+  int channels;   // bpp
+  int total_bytes; // band_rows * row_bytes
+  int pad0;
+} pc;
+
+uint readByte(uint index) {
+  const uint word = src.src_words[index >> 2u];
+  return (word >> ((index & 3u) * 8u)) & 0xFFu;
+}
+
+void main() {
+  const uint gid = gl_GlobalInvocationID.x;
+  const uint step = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+  const int row_bytes = pc.row_bytes;
+  const int channels = pc.channels;
+  const uint total_words = (uint(pc.total_bytes) + 3u) / 4u;
+
+  for (uint word = gid; word < total_words; word += step) {
+    const uint base = word * 4u;
+    uint packed = 0u;
+
+    for (uint k = 0u; k < 4u; ++k) {
+      const uint pos = base + k;
+      if (pos >= uint(pc.total_bytes)) break;
+
+      const int col = int(pos % uint(row_bytes));
+      const int value = int(readByte(pos));
+      const int left = col >= channels ? int(readByte(pos - uint(channels))) : 0;
+      packed |= uint((value - left) & 0xFF) << (k * 8u);
+    }
+
+    dst.dst_words[word] = packed;
+  }
+}

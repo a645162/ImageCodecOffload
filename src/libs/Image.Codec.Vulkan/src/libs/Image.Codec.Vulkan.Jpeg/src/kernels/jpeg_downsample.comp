@@ -1,0 +1,58 @@
+// File      : jpeg_downsample.comp
+// Brief     : JPEG 编码的色度盒式下采样（4:2:0 为 h2v2，4:2:2 为 h2v1）
+// Author    : 孔昊旻(Haomin Kong)
+// Email     : a645162@163.com
+// Created   : 2026-10-31
+//
+// 抽取比例必须由调用方给出（h_ratio / v_ratio），不能写死 2x2：
+// 4:2:2 的色度平面**高度与亮度相同**，只做水平抽取。写死 2x2 时 sy = y*2
+// 会越过平面底部被 clamp 到同一行，于是下半幅的色度被摊平成一条——文件还能
+// 打开、亮度还正常，只有颜色整体跑偏（实测平滑渐变图 422 从应有的 33 dB 掉到
+// 19 dB）。
+//
+// 舍入与 libjpeg 的盒式下采样一致：h2v2 是 (a+b+c+d+2)>>2，h2v1 是 (a+b+1)>>1，
+// 即统一的 (sum + count/2) / count。用求和后除而不是移位，是因为这里样本恒为
+// 非负，除法语义确定；负数才需要移位。
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer SrcBuf { float plane[]; } src;
+layout(set = 0, binding = 1) buffer DstBuf { float plane[]; } dst;
+
+layout(push_constant) uniform Params {
+  int src_stride;
+  int dst_stride;
+  int src_w;
+  int src_h;
+  int dst_w;
+  int dst_h;
+  int h_ratio; // 水平抽取比例：4:4:4 = 1，4:2:0 / 4:2:2 = 2
+  int v_ratio; // 垂直抽取比例：4:4:4 / 4:2:2 = 1，4:2:0 = 2
+} pc;
+
+int sampleClamped(int x, int y) {
+  const int cx = clamp(x, 0, pc.src_w - 1);
+  const int cy = clamp(y, 0, pc.src_h - 1);
+  return int(src.plane[cy * pc.src_stride + cx] + 0.5);
+}
+
+void main() {
+  const uint total = uint(pc.dst_w) * uint(pc.dst_h);
+  const uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+  const int count = pc.h_ratio * pc.v_ratio;
+
+  for (uint gid = gl_GlobalInvocationID.x; gid < total; gid += stride) {
+    const int x = int(gid % uint(pc.dst_w));
+    const int y = int(gid / uint(pc.dst_w));
+    const int sx = x * pc.h_ratio;
+    const int sy = y * pc.v_ratio;
+    int sum = 0;
+    for (int dy = 0; dy < pc.v_ratio; ++dy) {
+      for (int dx = 0; dx < pc.h_ratio; ++dx) {
+        sum += sampleClamped(sx + dx, sy + dy);
+      }
+    }
+    dst.plane[y * pc.dst_stride + x] = float((sum + count / 2) / count);
+  }
+}
