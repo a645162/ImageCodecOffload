@@ -1,6 +1,6 @@
 [submodule "src/libs/Image.Codec.Platform.Intel/3rdparty/libvpl"]
-	path = src/libs/Image.Codec.Platform.Intel/3rdparty/libvpl
+	path = src/libs/platform/Image.Codec.Platform.Intel/3rdparty/libvpl
 	url = https://github.com/intel/libvpl
 [submodule "src/libs/Image.Codec.Platform.Intel/3rdparty/vpl-gpu-rt"]
-	path = src/libs/Image.Codec.Platform.Intel/3rdparty/vpl-gpu-rt
+	path = src/libs/platform/Image.Codec.Platform.Intel/3rdparty/vpl-gpu-rt
 	url = https://github.com/intel/vpl-gpu-rt

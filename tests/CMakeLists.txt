@@ -16,10 +16,10 @@ target_link_libraries(ico_test PRIVATE
 # 测试要拿内部接口（BackendKind / Router::encodeWith / metrics 参考实现）：
 # 这些不在对外 C API 里，因此显式指到各库的 src/。
 target_include_directories(ico_test PRIVATE
-  "${PROJECT_SOURCE_DIR}/src/libs/Image.Codec.Offload.Core/src"
-  "${PROJECT_SOURCE_DIR}/src/libs/Image.Codec.Offload.Common/src"
-  "${PROJECT_SOURCE_DIR}/src/libs/Image.Codec.Offload.Cpu/src"
-  "${PROJECT_SOURCE_DIR}/src/libs/Image.Codec.Offload.Router/src")
+  "${PROJECT_SOURCE_DIR}/src/libs/offload/Image.Codec.Offload.Core/src"
+  "${PROJECT_SOURCE_DIR}/src/libs/offload/Image.Codec.Offload.Common/src"
+  "${PROJECT_SOURCE_DIR}/src/libs/offload/Image.Codec.Offload.Cpu/src"
+  "${PROJECT_SOURCE_DIR}/src/libs/offload/Image.Codec.Offload.Router/src")
 
 # CPU 目标的可选依赖宏是 PRIVATE；测试需要同一事实来断言能力页里的
 # ExecutionMode，不能只看全局 option（option 打开但找不到 port 时仍不可用）。

@@ -88,32 +88,10 @@ endif()
 # 这四个项目原本是 `libs/` 下的 git submodule，现已并入本仓库的源码树
 # （`src/libs/`），与路由层 / CPU 基线 / C API 并列——同一个仓库、同一次提交、
 # 同一份版本，不再需要「指针对不齐」的三级提交。
-if(IMAGECODEC_OFFLOAD_WITH_OPENCL)
-  add_subdirectory(src/libs/Image.Codec.OpenCL)
-endif()
-
-if(IMAGECODEC_OFFLOAD_WITH_CUDA)
-  add_subdirectory(src/libs/Image.Codec.CUDA)
-endif()
-
-# 平台抽象 + Intel oneVPL（硬件 JPEG / TIFF JPEG strips）。子项目自己带
-# 自测 CLI（OIC_BUILD_CLI，默认 OFF），作为父项目的一部分构建时不带 CLI。
-if(IMAGECODEC_OFFLOAD_WITH_PLATFORM)
-  add_subdirectory(src/libs/Image.Codec.Platform.Intel)
-endif()
-
-# NVIDIA 厂商编解码（nvJPEG / nvJPEG2000 / nvTIFF）。与 Platform.Intel 并列：
-# 厂商层工程只依赖 CUDA Runtime 与三个厂商运行库，不需要 nvcc 编译任何源码，
-# 因此不打开 WITH_CUDA 也能单独构建（有显卡没显卡都能配置）。
-if(IMAGECODEC_OFFLOAD_WITH_NVIDIA_PLATFORM)
-  add_subdirectory(src/libs/Image.Codec.Platform.NVIDIA)
-endif()
-
-# Vulkan 后端：TIFF / PNG 与画质指标已实现；JPEG 尚未实现，由能力表
-# （capabilities.jpeg_* = 0）在选后端时挡掉，交给 OpenCL / CUDA / CPU。
-if(IMAGECODEC_OFFLOAD_WITH_VULKAN)
-  add_subdirectory(src/libs/Image.Codec.Vulkan)
-endif()
+#
+# 后端的加入点已下沉到 src/libs/{codec,platform}/CMakeLists.txt：那里按
+# IMAGECODEC_OFFLOAD_WITH_* 决定是否加入，且保证**先于**路由层（src/libs/offload）。
+# 本文件只保留开关定义，不再逐个 add_subdirectory。
 
 # ---- 本项目的路由层 / API / CLI ----
 add_subdirectory(src)

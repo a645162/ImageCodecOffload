@@ -38,14 +38,26 @@ NVIDIA 厂商层（nvJPEG / nvJPEG2000 / nvTIFF，只加库、不进路由表）
 | 部分 | 说明 |
 | --- | --- |
 | `include/Image/Codec/Offload/` | 对外 C API `image_codec_offload_*` |
-| `src/libs/Image.Codec.Offload.*` | 路由层：Core（类型/指标 CPU 参考）、Common（BMP）、Cpu（基线）、Router（选择与回退）、Api |
+| `src/libs/offload/Image.Codec.Offload.*` | 路由层：Core（类型/指标 CPU 参考）、Common（BMP）、Cpu（基线）、Router（选择与回退）、Api |
 | `src/cli/` | `ico`：backends / info / encode / decode / compare |
-| `src/libs/Image.Codec.CUDA` | NVIDIA 后端：nvJPEG、GPU LZW、GPU 行滤波、GPU 指标、调参库 |
-| `src/libs/Image.Codec.OpenCL` | OpenCL 后端：混合 JPEG、GPU LZW |
-| `src/libs/Image.Codec.Platform.Intel` | 平台抽象与 Intel oneVPL 硬件后端 |
-| `src/libs/Image.Codec.Platform.NVIDIA` | NVIDIA 厂商后端：nvJPEG、nvJPEG2000（JP2）、nvTIFF（容器 + LZW/Deflate/JPEG/PackBits） |
-| `src/libs/Image.Codec.Vulkan` | Vulkan compute 编解码：TIFF（Predictor=2）、PNG 行滤波、baseline JPEG、画质指标 |
+| `src/libs/codec/Image.Codec.CUDA` | NVIDIA 后端：nvJPEG、GPU LZW、GPU 行滤波、GPU 指标、调参库 |
+| `src/libs/codec/Image.Codec.OpenCL` | OpenCL 后端：混合 JPEG、GPU LZW |
+| `src/libs/platform/Image.Codec.Platform.Intel` | 平台抽象与 Intel oneVPL 硬件后端 |
+| `src/libs/platform/Image.Codec.Platform.NVIDIA` | NVIDIA 厂商后端：nvJPEG、nvJPEG2000（JP2）、nvTIFF（容器 + LZW/Deflate/JPEG/PackBits） |
+| `src/libs/codec/Image.Codec.Vulkan` | Vulkan compute 编解码：TIFF（Predictor=2）、PNG 行滤波、baseline JPEG、画质指标 |
 | `tests/` | 端到端测试：往返、指标 golden、三后端对拍、灰度保真、回退原因 |
+
+`src/libs/` 下按职责分三组，避免十几个库平铺在同一层：
+
+```
+src/libs/
+├─ codec/      通用 GPU 计算后端（OpenCL / CUDA / Vulkan），由开关决定是否加入
+├─ platform/   厂商平台层（Intel oneVPL / NVIDIA nvJPEG·nvTIFF），同样由开关决定
+└─ offload/    路由层与 CPU 基线（Core / Common / Cpu / Router / Api），始终加入
+```
+
+加入顺序由 `src/libs/CMakeLists.txt` 固定为 codec → platform → offload：后端必须先于
+路由层加入，Router 才能在配置期用 `if(TARGET ...)` 判断某个后端是否真的编进了本次构建。
 
 ## 设计要点
 

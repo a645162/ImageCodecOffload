@@ -22,14 +22,23 @@ submodule，首次克隆需 `git submodule update --init --recursive`。
 调用方（ImageViewer / 脚本 / 自己的程序）
    │  C API: image_codec_offload_*（include/Image/Codec/Offload/image_codec_offload.h）
    ▼
-src/libs/Image.Codec.Offload.Router   ← 后端选择 / 回退 / 记录原因
+src/libs/offload/Image.Codec.Offload.Router   ← 后端选择 / 回退 / 记录原因
    ├─ Image.Codec.Offload.Cpu         ← libtiff / libpng / libjpeg-turbo（永远可用，也是像素级参照）
-   ├─ Image.Codec.Offload.Router ──►  src/libs/Image.Codec.CUDA   （nvJPEG / GPU LZW / GPU 行滤波）
-   ├─ Image.Codec.Offload.Router ──►  src/libs/Image.Codec.OpenCL （混合 JPEG / GPU LZW）
-   └─ Image.Codec.Offload.Router ──►  src/libs/Image.Codec.Vulkan （混合 JPEG / TIFF 预测器 / PNG 行滤波 / 指标）
+   ├─ Image.Codec.Offload.Router ──►  src/libs/codec/Image.Codec.CUDA   （nvJPEG / GPU LZW / GPU 行滤波）
+   ├─ Image.Codec.Offload.Router ──►  src/libs/codec/Image.Codec.OpenCL （混合 JPEG / GPU LZW）
+   └─ Image.Codec.Offload.Router ──►  src/libs/codec/Image.Codec.Vulkan （混合 JPEG / TIFF 预测器 / PNG 行滤波 / 指标）
         ▲
         └─ Image.Codec.Offload.Core / .Common / .Api（类型、指标 CPU 参考、BMP 中转、C API）
 ```
+
+`src/libs/` 按职责分三组，加入顺序固定为 codec → platform → offload（后端先于路由层，
+Router 才能在配置期用 `if(TARGET ...)` 判断后端是否真的编进了本次构建）：
+
+| 分组 | 内容 | 何时加入 |
+|------|------|----------|
+| `src/libs/codec/` | `Image.Codec.{CUDA,OpenCL,Vulkan}` | 各自的 `IMAGECODEC_OFFLOAD_WITH_*` 开关 |
+| `src/libs/platform/` | `Image.Codec.Platform.{Intel,NVIDIA}`，**不进路由后端表** | `_WITH_PLATFORM` / `_WITH_NVIDIA_PLATFORM`，默认 OFF |
+| `src/libs/offload/` | `Image.Codec.Offload.{Core,Common,Cpu,Router,Api}` | 始终 |
 
 ## 子项目
 
@@ -270,7 +279,7 @@ git submodule update --init --recursive   # 3rdparty/libvpl（头）、3rdparty/
 两者缺失时对应自测项 SKIP，不影响库构建。
 
 明确不需要：D3D11/DXGI、OpenCL/CUDA 运行库、X server（纯计算，可无显示器）、root 权限。
-依赖细节与实测环境见 `src/libs/Image.Codec.Platform.Intel/README.md` 的「依赖清单」。
+依赖细节与实测环境见 `src/libs/platform/Image.Codec.Platform.Intel/README.md` 的「依赖清单」。
 
 ### `Image.Codec.Platform.NVIDIA` 的依赖（`_WITH_NVIDIA_PLATFORM=ON` 时才相关）
 
@@ -288,7 +297,7 @@ git submodule update --init --recursive   # 3rdparty/libvpl（头）、3rdparty/
 父项目内默认关闭）里对应项 SKIP。
 
 ```bash
-cmake -S src/libs/Image.Codec.Platform.NVIDIA -B build/ico-nvidia \
+cmake -S src/libs/platform/Image.Codec.Platform.NVIDIA -B build/ico-nvidia \
   -DCMAKE_BUILD_TYPE=Debug -DOIC_BUILD_CLI=ON
 cmake --build build/ico-nvidia -j
 ./build/ico-nvidia/src/cli/inp_selftest
@@ -411,25 +420,32 @@ CPU 指标的 11×11 窗按 band 并行计算、**累加顺序保持不变**，�
 ## 目录结构
 
 ```
-CMakeLists.txt                     # 后端开关、CPU 基线依赖、后端挂载
+CMakeLists.txt                     # 后端开关、CPU 基线依赖
 include/Image/Codec/Offload/       # 对外 C API（ico_*）
 src/
 ├── cli/                           # ico
 └── libs/                          # 全部实现：后端 + 路由层同仓同版本
-    ├── Image.Codec.Offload.Core/     # 类型 / 错误 / 指标 CPU 参考 / ICodecBackend
-    ├── Image.Codec.Offload.Common/   # BMP 读写 + probeBmp
-    ├── Image.Codec.Offload.Cpu/      # libtiff / libpng / libjpeg-turbo + 容器通道探测
-    ├── Image.Codec.Offload.Router/   # 后端选择 / 回退 / OpenCL·CUDA·Vulkan 适配
-    ├── Image.Codec.Offload.Api/      # C API 实现
-    ├── Image.Codec.CUDA/             # NVIDIA 后端（每个后端内部再按 src/libs/<目标> 分层）
-    ├── Image.Codec.OpenCL/
-    ├── Image.Codec.Vulkan/
-    └── Image.Codec.Platform.Intel/   # Intel oneVPL 硬件路径
-        └── 3rdparty/                 # libvpl / vpl-gpu-rt（仅这两处仍是 git submodule）
-    └── Image.Codec.Platform.NVIDIA/  # NVIDIA 厂商路径（nvJPEG / nvJPEG2000 / nvTIFF）
+    ├── codec/                     # 通用 GPU 计算后端（各自开关，默认仅 OpenCL）
+    │   ├── Image.Codec.CUDA/          # NVIDIA 后端（内部再按 src/libs/<目标> 分层）
+    │   ├── Image.Codec.OpenCL/
+    │   └── Image.Codec.Vulkan/
+    ├── platform/                  # 厂商平台层（不进路由后端表）
+    │   ├── Image.Codec.Platform.Intel/
+    │   │   └── 3rdparty/              # libvpl / vpl-gpu-rt（仅这两处仍是 git submodule）
+    │   └── Image.Codec.Platform.NVIDIA/
+    └── offload/                   # 路由层与 CPU 基线（始终加入）
+        ├── Image.Codec.Offload.Core/     # 类型 / 错误 / 指标 CPU 参考 / ICodecBackend
+        ├── Image.Codec.Offload.Common/   # BMP 读写 + probeBmp
+        ├── Image.Codec.Offload.Cpu/      # libtiff / libpng / libjpeg-turbo + 容器通道探测
+        ├── Image.Codec.Offload.Router/   # 后端选择 / 回退 / OpenCL·CUDA·Vulkan 适配
+        └── Image.Codec.Offload.Api/      # C API 实现
 tests/                             # ico_test
 docs/                              # plan / report / 本文件
 ```
+
+加入顺序由 `src/libs/CMakeLists.txt` 固定为 `codec` → `platform` → `offload`：
+后端必须先于路由层加入，Router 才能在配置期用 `if(TARGET ...)` 判断某个后端
+是否真的编进了本次构建。
 
 ## 提交约定
 
@@ -444,4 +460,4 @@ docs/                              # plan / report / 本文件
 
 - `docs/plan/`：实施计划
 - `docs/report/`：研究报告与实测数据
-- `src/libs/Image.Codec.CUDA/docs/`：CUDA 后端的架构、指标定义与调参说明
+- `src/libs/codec/Image.Codec.CUDA/docs/`：CUDA 后端的架构、指标定义与调参说明
