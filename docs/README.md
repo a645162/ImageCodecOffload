@@ -256,8 +256,19 @@ cmake --build build -j
 | `IMAGECODEC_OFFLOAD_WITH_PLATFORM` | `OFF` | 构建 `Image.Codec.Platform.Intel`（平台抽象 + Intel oneVPL 硬件 JPEG / TIFF JPEG strips）。**只加库，不动路由后端表与 `ico`** |
 | `IMAGECODEC_OFFLOAD_WITH_NVIDIA_PLATFORM` | `OFF` | 构建 `Image.Codec.Platform.NVIDIA`（nvJPEG + nvJPEG2000 + nvTIFF）。**只加库，不动路由后端表与 `ico`**；不需要 nvcc，`nvjpeg2k` / `nvtiff` 缺哪个就把对应 codec 标为不可用 |
 | `IMAGECODEC_OFFLOAD_WITH_VULKAN` | `OFF` | 构建 Vulkan 后端（JPEG/TIFF/PNG + 指标）。需要 GLSL 编译器（`glslc` 或 `glslangValidator`） |
+| `IMAGECODEC_OFFLOAD_WITH_OPENJPEG` | `ON` | 启用 JPEG 2000 CPU 编解码；依赖 `libopenjp2`（pkg-config 或 `find_package(OpenJPEG CONFIG)`） |
+| `IMAGECODEC_OFFLOAD_WITH_JXL` | `ON` | 启用 JPEG XL CPU 编解码；依赖 `libjxl` 的 pkg-config 文件（vcpkg 依赖 `libjxl`） |
 | `IMAGECODEC_OFFLOAD_BUILD_CLI` | `ON` | 构建 `ico` |
 | `IMAGECODEC_OFFLOAD_BUILD_TESTS` | `OFF` | 构建并注册 ctest（`ico_test` + 各子项目测试） |
+
+`_WITH_OPENJPEG` / `_WITH_JXL` 是**请求**，能不能真的编进来取决于依赖有没有被找到。
+解析结果写成 `IMAGECODEC_OFFLOAD_HAVE_OPENJPEG` / `IMAGECODEC_OFFLOAD_HAVE_JXL`，
+CPU 后端、路由层与 GPU 适配层全部只看这一份：开关打开但依赖缺失时 configure 会打印
+一条 `WARNING`，并且后端**不再宣称支持**该格式（`supports(JpegXl)` 为假）。
+
+这条规则不是洁癖：两侧各用各的判断时，一台 OpenCL 完全正常的机器上，JXL 任务会得到
+`backend-unavailable`（真实原因是「这次构建没有 libjxl」），而消息把所有人引向「设备不可用」。
+缺依赖时不打 `FATAL`——没有 libjxl 仍然可以编 JPEG / TIFF / PNG / JP2。
 
 ### `Image.Codec.Platform.Intel` 的依赖（`_WITH_PLATFORM=ON` 时才相关）
 

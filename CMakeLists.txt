@@ -78,6 +78,40 @@ if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND NOT TARGET PkgConfig::OPENJPEG_PC)
   find_package(OpenJPEG CONFIG QUIET)
 endif()
 
+# ---- 「开关打开」与「真的有这个编解码器」是两件事 ----
+# *_WITH_JXL / *_WITH_OPENJPEG 是**用户请求**；能不能编出 JXL / JP2 还要看依赖
+# 有没有被找到。两者必须只留一个事实源（下面这两个 HAVE_*），否则 CPU 后端按
+# 「没找到依赖」编译，路由层与 GPU 适配层却按「开关是开的」宣称支持该格式，
+# 结果是一台 OpenCL 完全正常的机器上，JXL 任务报 backend-unavailable——
+# 没人能从这条消息看出真实原因是「这次构建没有 libjxl」。
+#
+# 用 CACHE INTERNAL 而不是普通变量：后端在多层 add_subdirectory 里，普通变量
+# 要靠「父目录恰好先定义」才传得下去，漏一层就静默退回默认值。
+if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND
+   (TARGET OpenJPEG::OpenJPEG OR TARGET openjp2_static OR TARGET openjp2 OR
+    TARGET PkgConfig::OPENJPEG_PC))
+  set(IMAGECODEC_OFFLOAD_HAVE_OPENJPEG ON CACHE INTERNAL "")
+else()
+  set(IMAGECODEC_OFFLOAD_HAVE_OPENJPEG OFF CACHE INTERNAL "")
+endif()
+
+if(IMAGECODEC_OFFLOAD_WITH_JXL AND TARGET PkgConfig::JXL_PC)
+  set(IMAGECODEC_OFFLOAD_HAVE_JXL ON CACHE INTERNAL "")
+else()
+  set(IMAGECODEC_OFFLOAD_HAVE_JXL OFF CACHE INTERNAL "")
+endif()
+
+# 请求了却拿不到时必须在 configure 阶段说出来：静默降级会让「格式支持」变成
+# 一个运行期才知道的谎（见上）。这两条不打 FATAL——缺 JXL 仍能编 JPEG/TIFF/PNG。
+if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG AND NOT IMAGECODEC_OFFLOAD_HAVE_OPENJPEG)
+  message(WARNING
+    "Image.Codec.Offload: IMAGECODEC_OFFLOAD_WITH_OPENJPEG=ON but OpenJPEG was not found. JPEG 2000 will NOT be built; JP2/J2K encode and decode will report backend-unavailable.")
+endif()
+if(IMAGECODEC_OFFLOAD_WITH_JXL AND NOT IMAGECODEC_OFFLOAD_HAVE_JXL)
+  message(WARNING
+    "Image.Codec.Offload: IMAGECODEC_OFFLOAD_WITH_JXL=ON but libjxl was not found (vcpkg dependency 'libjxl' plus its pkg-config file). JPEG XL will NOT be built; JXL encode will report backend-unavailable.")
+endif()
+
 if(IMAGECODEC_OFFLOAD_WITH_CUDA)
   # 子项目的 CMakeLists 也会 project(... LANGUAGES ... CUDA)，这里先启用一次，
   # 让编译器探测失败的报错出现在「本项目的配置阶段」而不是某个子目录里。

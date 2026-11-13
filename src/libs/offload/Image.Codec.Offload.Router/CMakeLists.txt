@@ -28,11 +28,11 @@ if(IMAGECODEC_OFFLOAD_WITH_OPENCL)
     IMAGECODEC_OFFLOAD_WITH_OPENCL=1)
   target_link_libraries(Image.Codec.Offload.Router PRIVATE
     Image.Codec.OpenCL.Api)
-  if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+  if(IMAGECODEC_OFFLOAD_HAVE_OPENJPEG)
     target_compile_definitions(Image.Codec.Offload.Router PRIVATE
       IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
   endif()
-  if(IMAGECODEC_OFFLOAD_WITH_JXL)
+  if(IMAGECODEC_OFFLOAD_HAVE_JXL)
     target_compile_definitions(Image.Codec.Offload.Router PRIVATE
       IMAGECODEC_OFFLOAD_WITH_JXL=1)
   endif()
@@ -43,11 +43,11 @@ if(IMAGECODEC_OFFLOAD_WITH_CUDA)
     IMAGECODEC_OFFLOAD_WITH_CUDA=1)
   target_link_libraries(Image.Codec.Offload.Router PRIVATE
     Image.Codec.CUDA.Api)
-  if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+  if(IMAGECODEC_OFFLOAD_HAVE_OPENJPEG)
     target_compile_definitions(Image.Codec.Offload.Router PRIVATE
       IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
   endif()
-  if(IMAGECODEC_OFFLOAD_WITH_JXL)
+  if(IMAGECODEC_OFFLOAD_HAVE_JXL)
     target_compile_definitions(Image.Codec.Offload.Router PRIVATE
       IMAGECODEC_OFFLOAD_WITH_JXL=1)
   endif()
@@ -58,11 +58,11 @@ if(IMAGECODEC_OFFLOAD_WITH_VULKAN)
     IMAGECODEC_OFFLOAD_WITH_VULKAN=1)
   target_link_libraries(Image.Codec.Offload.Router PRIVATE
     Image.Codec.Vulkan::CodecApi)
-  if(IMAGECODEC_OFFLOAD_WITH_OPENJPEG)
+  if(IMAGECODEC_OFFLOAD_HAVE_OPENJPEG)
     target_compile_definitions(Image.Codec.Offload.Router PRIVATE
       IMAGECODEC_OFFLOAD_WITH_OPENJPEG=1)
   endif()
-  if(IMAGECODEC_OFFLOAD_WITH_JXL)
+  if(IMAGECODEC_OFFLOAD_HAVE_JXL)
     target_compile_definitions(Image.Codec.Offload.Router PRIVATE
       IMAGECODEC_OFFLOAD_WITH_JXL=1)
   endif()
